@@ -5,8 +5,12 @@ import { openai } from "@workspace/integrations-openai-ai-server";
 import { buildProjectContext } from "../lib/rag";
 import { saveMemory } from "../lib/memory";
 import { requireAuth, getAuthUser } from "../middlewares/auth";
+import { checkBudget, checkDailyQuota, trackUsage } from "../lib/cost";
 
 const router: IRouter = Router();
+
+const GPT_INPUT_COST_PER_1K = 0.002;
+const GPT_OUTPUT_COST_PER_1K = 0.008;
 
 function parseId(val: unknown): number | null {
   const n = parseInt(String(val), 10);
@@ -125,6 +129,24 @@ router.post("/chat/conversations/:convId/messages", requireAuth, async (req, res
     .where(and(eq(conversations.id, convId), convOwnerFilter(userId)));
   if (!conv) { res.status(404).json({ error: "Conversation not found" }); return; }
 
+  // Budget & quota guard (must be before SSE headers)
+  const [budgetRes, quotaRes] = await Promise.all([
+    checkBudget(userId),
+    checkDailyQuota(userId),
+  ]);
+  if (!budgetRes.allowed) {
+    res.status(402).json({
+      error: `Ngân sách tháng đã hết: đã dùng $${budgetRes.spent.toFixed(4)} / $${budgetRes.limit.toFixed(2)}. Vào /cost để xem chi tiết.`,
+    });
+    return;
+  }
+  if (!quotaRes.allowed) {
+    res.status(429).json({
+      error: `Quota token hàng ngày đã hết: ${quotaRes.used.toLocaleString()} / ${quotaRes.limit.toLocaleString()} tokens. Thử lại vào ngày mai.`,
+    });
+    return;
+  }
+
   let systemPrompt =
     "Bạn là AI Business Advisor — chuyên gia tư vấn kinh doanh cho doanh nhân Việt Nam. " +
     "Trả lời ngắn gọn, thực tế, dễ áp dụng. Ngôn ngữ chính: tiếng Việt.";
@@ -158,6 +180,8 @@ router.post("/chat/conversations/:convId/messages", requireAuth, async (req, res
   res.setHeader("X-Accel-Buffering", "no");
 
   let fullResponse = "";
+  let chatInputTokens = 0;
+  let chatOutputTokens = 0;
 
   try {
     const stream = await openai.chat.completions.create({
@@ -171,6 +195,7 @@ router.post("/chat/conversations/:convId/messages", requireAuth, async (req, res
         })),
       ],
       stream: true,
+      stream_options: { include_usage: true },
     });
 
     for await (const chunk of stream) {
@@ -178,6 +203,10 @@ router.post("/chat/conversations/:convId/messages", requireAuth, async (req, res
       if (delta) {
         fullResponse += delta;
         res.write(`data: ${JSON.stringify({ content: delta })}\n\n`);
+      }
+      if (chunk.usage) {
+        chatInputTokens = chunk.usage.prompt_tokens ?? 0;
+        chatOutputTokens = chunk.usage.completion_tokens ?? 0;
       }
     }
 
@@ -190,6 +219,14 @@ router.post("/chat/conversations/:convId/messages", requireAuth, async (req, res
     if (conv.projectId) {
       const chatSnapshot = `[User]: ${content}\n[Assistant]: ${fullResponse}`;
       await saveMemory(conv.projectId, "chat_history", chatSnapshot).catch(() => {});
+    }
+
+    const chatTotalTokens = chatInputTokens + chatOutputTokens;
+    if (chatTotalTokens > 0) {
+      const chatCost =
+        (chatInputTokens / 1000) * GPT_INPUT_COST_PER_1K +
+        (chatOutputTokens / 1000) * GPT_OUTPUT_COST_PER_1K;
+      await trackUsage(userId, chatTotalTokens, chatCost, "chat").catch(() => {});
     }
 
     res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
@@ -227,7 +264,7 @@ router.get("/chat/projects/:id/knowledge", requireAuth, async (req, res): Promis
   );
 });
 
-// GET /chat/projects/:id/memory  — read project memory
+// GET /chat/projects/:id/memory
 router.get("/chat/projects/:id/memory", requireAuth, async (req, res): Promise<void> => {
   const userId = getAuthUser(req);
   const id = parseId(req.params.id);

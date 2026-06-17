@@ -7,6 +7,7 @@ import openaiConversationsRouter from "./openai-conversations";
 import chatRouter from "./chat";
 import jobsRouter from "./jobs";
 import advisorRouter from "./advisor";
+import costRouter from "./cost";
 
 const router: IRouter = Router();
 
@@ -18,5 +19,6 @@ router.use(openaiConversationsRouter);
 router.use(chatRouter);
 router.use(jobsRouter);
 router.use(advisorRouter);
+router.use(costRouter);
 
 export default router;

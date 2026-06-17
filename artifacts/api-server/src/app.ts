@@ -1,6 +1,7 @@
 import express, { type Express } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
+import rateLimit from "express-rate-limit";
 import router from "./routes";
 import { logger } from "./lib/logger";
 import { setupAuth } from "./lib/auth";
@@ -43,6 +44,16 @@ export async function createApp(): Promise<Express> {
   app.use(express.urlencoded({ extended: true }));
 
   await setupAuth(app);
+
+  const apiLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    limit: parseInt(process.env.RATE_LIMIT_RPM ?? "120", 10),
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    keyGenerator: (req) => (req.user as any)?.claims?.sub ?? req.ip ?? "anon",
+    message: { error: "Quá nhiều yêu cầu. Vui lòng chờ 1 phút rồi thử lại." },
+  });
+  app.use("/api", apiLimiter);
 
   app.use("/api", router);
 

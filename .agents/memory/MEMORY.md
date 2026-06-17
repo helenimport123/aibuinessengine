@@ -1,2 +1,3 @@
 - [Job Queue Architecture](job-queue.md) — queuedAt timestamp distinguishes worker-queued vs user-pending tasks; worker uses FOR UPDATE SKIP LOCKED.
 - [Replit Auth Setup](replit-auth-setup.md) — Replit OIDC via openid-client v6 + passport, sessions in PG, all API routes protected with requireAuth middleware; ownership via userId nullable FK.
+- [Phase 2 Cost Protection](cost-protection.md) — usage_daily + budget_config tables, per-user rate limiting, budget/quota guards in all 4 AI routes, cost dashboard at /cost, CSV export.

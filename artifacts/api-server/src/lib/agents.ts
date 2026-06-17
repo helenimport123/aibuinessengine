@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { db, agentTasksTable, projectsTable, agentRunsTable } from "@workspace/db";
 import { openai } from "@workspace/integrations-openai-ai-server";
 import { logger } from "./logger";
+import { checkBudget, checkDailyQuota, trackUsage } from "./cost";
 import { syncTaskToKnowledgeBase } from "./rag";
 import { saveMemory } from "./memory";
 import { emitJobEvent } from "./queue";
@@ -261,6 +262,26 @@ export async function runAgentForProject(
   let outputTokens = 0;
 
   try {
+    // ── Budget & quota guard ─────────────────────────────────────────────
+    if (project.userId) {
+      sendEvent?.({ type: "log", message: `[${ts()}] Kiểm tra ngân sách...` });
+      const [budgetRes, quotaRes] = await Promise.all([
+        checkBudget(project.userId),
+        checkDailyQuota(project.userId),
+      ]);
+      if (!budgetRes.allowed) {
+        throw new Error(
+          `Ngân sách tháng đã hết: đã dùng $${budgetRes.spent.toFixed(4)} / $${budgetRes.limit.toFixed(2)}`
+        );
+      }
+      if (!quotaRes.allowed) {
+        throw new Error(
+          `Quota token hàng ngày đã hết: ${quotaRes.used.toLocaleString()} / ${quotaRes.limit.toLocaleString()} tokens`
+        );
+      }
+    }
+    // ─────────────────────────────────────────────────────────────────────
+
     sendEvent?.({ type: "log", message: `[${ts()}] Gửi prompt đến model (${prompt.length} ký tự)...` });
     sendEvent?.({ type: "progress", percent: 15 });
 
@@ -294,6 +315,12 @@ export async function runAgentForProject(
     const totalTokens = inputTokens + outputTokens;
     const cost = (inputTokens / 1000) * GPT_INPUT_COST_PER_1K + (outputTokens / 1000) * GPT_OUTPUT_COST_PER_1K;
 
+    // ── Track usage ──────────────────────────────────────────────────────
+    if (project.userId) {
+      await trackUsage(project.userId, totalTokens, cost, "agent").catch(() => {});
+    }
+    // ─────────────────────────────────────────────────────────────────────
+
     // ── CEO orchestration ────────────────────────────────────────────────
     let executionPlan: ExecutionPlanItem[] = [];
     if (agentType === "ceo") {
@@ -317,7 +344,6 @@ export async function runAgentForProject(
           });
           sendEvent?.({ type: "plan", plan: executionPlan });
 
-          // Emit job_queued for each orchestrated task
           for (const t of createdTasks) {
             const planItem = executionPlan.find((e) => e.agent === t.agentType);
             emitJobEvent({
@@ -330,14 +356,13 @@ export async function runAgentForProject(
             });
             logger.info({ taskId: t.id, agentType: t.agentType, reason: planItem?.reason }, "Orchestrated task queued");
           }
-          // Worker will pick them up automatically — no direct fire
         }
       } catch (planErr) {
         logger.error({ planErr, projectId }, "Failed to fetch CEO execution plan");
         sendEvent?.({ type: "log", message: `[${ts()}] Không thể tạo execution plan.` });
       }
     }
-    // ────────────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────
 
     sendEvent?.({ type: "progress", percent: 95 });
     sendEvent?.({ type: "log", message: `[${ts()}] Lưu kết quả vào database...` });

@@ -8,6 +8,7 @@ import NewProject from "@/pages/new-project";
 import ProjectDetail from "@/pages/project-detail";
 import ChatPage from "@/pages/chat";
 import CompanyChatPage from "@/pages/company-chat";
+import CostDashboard from "@/pages/cost";
 import LoginPage from "@/pages/login";
 import { useAuth } from "@/hooks/use-auth";
 
@@ -42,6 +43,7 @@ function Router() {
       <Route path="/projects/:id" component={ProjectDetail} />
       <Route path="/chat" component={ChatPage} />
       <Route path="/company-chat" component={CompanyChatPage} />
+      <Route path="/cost" component={CostDashboard} />
       <Route component={NotFound} />
     </Switch>
   );

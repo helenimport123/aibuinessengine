@@ -11,8 +11,12 @@ import {
 } from "@workspace/api-zod";
 import { openai } from "@workspace/integrations-openai-ai-server";
 import { requireAuth, getAuthUser } from "../middlewares/auth";
+import { checkBudget, checkDailyQuota, trackUsage } from "../lib/cost";
 
 const router: IRouter = Router();
+
+const GPT_INPUT_COST_PER_1K = 0.002;
+const GPT_OUTPUT_COST_PER_1K = 0.008;
 
 function formatConv(c: typeof conversations.$inferSelect) {
   return { ...c, createdAt: c.createdAt.toISOString() };
@@ -180,6 +184,24 @@ router.post("/openai/conversations/:id/messages", requireAuth, async (req, res):
     return;
   }
 
+  // Budget & quota guard (must be before SSE headers)
+  const [budgetRes, quotaRes] = await Promise.all([
+    checkBudget(userId),
+    checkDailyQuota(userId),
+  ]);
+  if (!budgetRes.allowed) {
+    res.status(402).json({
+      error: `Ngân sách tháng đã hết: đã dùng $${budgetRes.spent.toFixed(4)} / $${budgetRes.limit.toFixed(2)}. Vào /cost để xem chi tiết.`,
+    });
+    return;
+  }
+  if (!quotaRes.allowed) {
+    res.status(429).json({
+      error: `Quota token hàng ngày đã hết: ${quotaRes.used.toLocaleString()} / ${quotaRes.limit.toLocaleString()} tokens. Thử lại vào ngày mai.`,
+    });
+    return;
+  }
+
   await db.insert(messages).values({
     conversationId: params.data.id,
     role: "user",
@@ -198,6 +220,8 @@ router.post("/openai/conversations/:id/messages", requireAuth, async (req, res):
   res.setHeader("X-Accel-Buffering", "no");
 
   let fullResponse = "";
+  let oaiInputTokens = 0;
+  let oaiOutputTokens = 0;
 
   try {
     const stream = await openai.chat.completions.create({
@@ -215,6 +239,7 @@ router.post("/openai/conversations/:id/messages", requireAuth, async (req, res):
         })),
       ],
       stream: true,
+      stream_options: { include_usage: true },
     });
 
     for await (const chunk of stream) {
@@ -223,6 +248,10 @@ router.post("/openai/conversations/:id/messages", requireAuth, async (req, res):
         fullResponse += content;
         res.write(`data: ${JSON.stringify({ content })}\n\n`);
       }
+      if (chunk.usage) {
+        oaiInputTokens = chunk.usage.prompt_tokens ?? 0;
+        oaiOutputTokens = chunk.usage.completion_tokens ?? 0;
+      }
     }
 
     await db.insert(messages).values({
@@ -230,6 +259,14 @@ router.post("/openai/conversations/:id/messages", requireAuth, async (req, res):
       role: "assistant",
       content: fullResponse,
     });
+
+    const oaiTotalTokens = oaiInputTokens + oaiOutputTokens;
+    if (oaiTotalTokens > 0) {
+      const oaiCost =
+        (oaiInputTokens / 1000) * GPT_INPUT_COST_PER_1K +
+        (oaiOutputTokens / 1000) * GPT_OUTPUT_COST_PER_1K;
+      await trackUsage(userId, oaiTotalTokens, oaiCost, "chat").catch(() => {});
+    }
 
     res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
   } catch (err) {

@@ -4,8 +4,12 @@ import { db, projectsTable } from "@workspace/db";
 import { openai } from "@workspace/integrations-openai-ai-server";
 import { buildMemoryContext, saveMemory, getMemory } from "../lib/memory";
 import { requireAuth, getAuthUser } from "../middlewares/auth";
+import { checkBudget, checkDailyQuota, trackUsage } from "../lib/cost";
 
 const router: IRouter = Router();
+
+const GPT_INPUT_COST_PER_1K = 0.002;
+const GPT_OUTPUT_COST_PER_1K = 0.008;
 
 function parseId(val: unknown): number | null {
   const n = parseInt(String(val), 10);
@@ -73,6 +77,24 @@ router.post("/advisor/:projectId/ask", requireAuth, async (req, res): Promise<vo
     .where(and(eq(projectsTable.id, projectId), ownerFilter(userId)));
   if (!project) { res.status(404).json({ error: "Project not found" }); return; }
 
+  // Budget & quota guard (must be before SSE headers)
+  const [budgetRes, quotaRes] = await Promise.all([
+    checkBudget(userId),
+    checkDailyQuota(userId),
+  ]);
+  if (!budgetRes.allowed) {
+    res.status(402).json({
+      error: `Ngân sách tháng đã hết: đã dùng $${budgetRes.spent.toFixed(4)} / $${budgetRes.limit.toFixed(2)}. Vào /cost để xem chi tiết.`,
+    });
+    return;
+  }
+  if (!quotaRes.allowed) {
+    res.status(429).json({
+      error: `Quota token hàng ngày đã hết: ${quotaRes.used.toLocaleString()} / ${quotaRes.limit.toLocaleString()} tokens. Thử lại vào ngày mai.`,
+    });
+    return;
+  }
+
   const memoryContext = await buildMemoryContext(projectId, question);
 
   const systemPrompt = `Bạn là Advisor Agent — cố vấn kinh doanh tổng hợp cho dự án "${project.name}".
@@ -98,6 +120,8 @@ Nguyên tắc trả lời:
   res.setHeader("X-Accel-Buffering", "no");
 
   let fullResponse = "";
+  let advInputTokens = 0;
+  let advOutputTokens = 0;
 
   try {
     const stream = await openai.chat.completions.create({
@@ -108,6 +132,7 @@ Nguyên tắc trả lời:
         { role: "user", content: question },
       ],
       stream: true,
+      stream_options: { include_usage: true },
     });
 
     for await (const chunk of stream) {
@@ -116,10 +141,22 @@ Nguyên tắc trả lời:
         fullResponse += delta;
         res.write(`data: ${JSON.stringify({ content: delta })}\n\n`);
       }
+      if (chunk.usage) {
+        advInputTokens = chunk.usage.prompt_tokens ?? 0;
+        advOutputTokens = chunk.usage.completion_tokens ?? 0;
+      }
     }
 
     const snapshot = `[Câu hỏi]: ${question}\n[Advisor]: ${fullResponse}`;
     await saveMemory(projectId, "chat_history", snapshot).catch(() => {});
+
+    const advTotalTokens = advInputTokens + advOutputTokens;
+    if (advTotalTokens > 0) {
+      const advCost =
+        (advInputTokens / 1000) * GPT_INPUT_COST_PER_1K +
+        (advOutputTokens / 1000) * GPT_OUTPUT_COST_PER_1K;
+      await trackUsage(userId, advTotalTokens, advCost, "chat").catch(() => {});
+    }
 
     res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
   } catch (err) {
