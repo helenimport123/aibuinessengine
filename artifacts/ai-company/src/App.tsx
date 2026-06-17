@@ -6,6 +6,7 @@ import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/dashboard";
 import NewProject from "@/pages/new-project";
 import ProjectDetail from "@/pages/project-detail";
+import ChatPage from "@/pages/chat";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -22,6 +23,7 @@ function Router() {
       <Route path="/" component={Dashboard} />
       <Route path="/new" component={NewProject} />
       <Route path="/projects/:id" component={ProjectDetail} />
+      <Route path="/chat" component={ChatPage} />
       <Route component={NotFound} />
     </Switch>
   );

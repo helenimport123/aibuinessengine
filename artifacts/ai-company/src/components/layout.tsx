@@ -1,6 +1,6 @@
 import React from "react";
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, PlusCircle, Terminal } from "lucide-react";
+import { LayoutDashboard, PlusCircle, Terminal, MessageCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface LayoutProps {
@@ -13,6 +13,7 @@ export function Layout({ children }: LayoutProps) {
   const navItems = [
     { href: "/", label: "Dashboard", icon: LayoutDashboard },
     { href: "/new", label: "Tạo Dự Án", icon: PlusCircle },
+    { href: "/chat", label: "AI Memory Chat", icon: MessageCircle },
   ];
 
   return (

@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { db, agentTasksTable, projectsTable, agentRunsTable } from "@workspace/db";
 import { openai } from "@workspace/integrations-openai-ai-server";
 import { logger } from "./logger";
+import { syncTaskToKnowledgeBase } from "./rag";
 
 type Project = typeof projectsTable.$inferSelect;
 
@@ -177,6 +178,11 @@ export async function runAgentForProject(
         completedAt: new Date(),
       })
       .where(eq(agentTasksTable.id, task.id));
+
+    // Sync output to knowledge base for RAG
+    await syncTaskToKnowledgeBase(projectId, agentType, task.agentName, fullOutput).catch((e) =>
+      logger.error({ e }, "Failed to sync to knowledge base")
+    );
 
     // Update agent_run record
     await db
