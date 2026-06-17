@@ -1,4 +1,4 @@
-import { Brain, Megaphone, Target } from "lucide-react";
+import { Brain, Megaphone, Target, Headphones, Users, Calculator, Scale } from "lucide-react";
 
 export const AGENT_CONFIG = {
   ceo: {
@@ -34,8 +34,52 @@ export const AGENT_CONFIG = {
     accent: "emerald",
     progressColor: "bg-emerald-400",
   },
+  cskh: {
+    name: "AI CSKH",
+    label: "Dịch Vụ Khách Hàng",
+    icon: Headphones,
+    color: "text-amber-400",
+    bg: "bg-amber-400/10",
+    border: "border-amber-400/30",
+    glow: "shadow-[0_0_20px_rgba(251,191,36,0.25)]",
+    accent: "amber",
+    progressColor: "bg-amber-400",
+  },
+  hr: {
+    name: "AI HR",
+    label: "Nhân Sự & Tổ Chức",
+    icon: Users,
+    color: "text-blue-400",
+    bg: "bg-blue-400/10",
+    border: "border-blue-400/30",
+    glow: "shadow-[0_0_20px_rgba(96,165,250,0.25)]",
+    accent: "blue",
+    progressColor: "bg-blue-400",
+  },
+  accountant: {
+    name: "AI Kế Toán",
+    label: "Tài Chính & Ngân Sách",
+    icon: Calculator,
+    color: "text-teal-400",
+    bg: "bg-teal-400/10",
+    border: "border-teal-400/30",
+    glow: "shadow-[0_0_20px_rgba(45,212,191,0.25)]",
+    accent: "teal",
+    progressColor: "bg-teal-400",
+  },
+  legal: {
+    name: "AI Pháp Lý",
+    label: "Khung Pháp Lý",
+    icon: Scale,
+    color: "text-violet-400",
+    bg: "bg-violet-400/10",
+    border: "border-violet-400/30",
+    glow: "shadow-[0_0_20px_rgba(167,139,250,0.25)]",
+    accent: "violet",
+    progressColor: "bg-violet-400",
+  },
 } as const;
 
-export const AGENT_ORDER: AgentType[] = ["ceo", "marketing", "sales"];
+export const AGENT_ORDER: AgentType[] = ["ceo", "marketing", "sales", "cskh", "hr", "accountant", "legal"];
 
 export type AgentType = keyof typeof AGENT_CONFIG;

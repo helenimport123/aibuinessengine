@@ -10,6 +10,7 @@ export const projectsTable = pgTable("projects", {
   targetMarket: text("target_market"),
   status: text("status").notNull().default("draft"),
   completionPercent: integer("completion_percent").notNull().default(0),
+  executionPlan: text("execution_plan"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

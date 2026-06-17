@@ -12,16 +12,11 @@ import { runAgentForProject } from "../lib/agents";
 
 const router: IRouter = Router();
 
-const AGENT_TYPES = [
-  { type: "ceo", name: "AI CEO" },
-  { type: "marketing", name: "AI Marketing" },
-  { type: "sales", name: "AI Sales" },
-];
-
 function formatProject(p: typeof projectsTable.$inferSelect) {
   return {
     ...p,
     createdAt: p.createdAt.toISOString(),
+    executionPlan: p.executionPlan ? (JSON.parse(p.executionPlan) as unknown) : null,
   };
 }
 
@@ -47,7 +42,7 @@ router.get("/projects", async (_req, res): Promise<void> => {
   res.json(projects.map(formatProject));
 });
 
-// POST /api/projects
+// POST /api/projects — creates project + CEO task only (CEO will orchestrate the rest)
 router.post("/projects", async (req, res): Promise<void> => {
   const parsed = CreateProjectBody.safeParse(req.body);
   if (!parsed.success) {
@@ -67,15 +62,12 @@ router.post("/projects", async (req, res): Promise<void> => {
     })
     .returning();
 
-  // Create pending tasks for 3 agents only
-  await db.insert(agentTasksTable).values(
-    AGENT_TYPES.map((a) => ({
-      projectId: project.id,
-      agentType: a.type,
-      agentName: a.name,
-      status: "pending",
-    }))
-  );
+  await db.insert(agentTasksTable).values({
+    projectId: project.id,
+    agentType: "ceo",
+    agentName: "AI CEO",
+    status: "pending",
+  });
 
   res.status(201).json(formatProject(project));
 });
@@ -129,6 +121,7 @@ router.delete("/projects/:id", async (req, res): Promise<void> => {
 });
 
 // POST /api/projects/:id/run-all
+// Resets project to CEO-only state and re-runs orchestration from scratch
 router.post("/projects/:id/run-all", async (req, res): Promise<void> => {
   const params = RunAllAgentsParams.safeParse(req.params);
   if (!params.success) {
@@ -146,27 +139,34 @@ router.post("/projects/:id/run-all", async (req, res): Promise<void> => {
     return;
   }
 
+  // Delete all existing tasks and reset project state
   await db
-    .update(projectsTable)
-    .set({ status: "running" })
-    .where(eq(projectsTable.id, params.data.id));
-
-  await db
-    .update(agentTasksTable)
-    .set({ status: "pending", output: null, errorMessage: null, completedAt: null })
+    .delete(agentTasksTable)
     .where(eq(agentTasksTable.projectId, params.data.id));
 
-  const agentTypes = AGENT_TYPES.map((a) => a.type);
-  for (const agentType of agentTypes) {
-    runAgentForProject(params.data.id, agentType, project).catch((err) => {
-      logger.error({ err, agentType, projectId: params.data.id }, "Background agent failed");
-    });
-  }
+  await db
+    .update(projectsTable)
+    .set({ status: "running", completionPercent: 0, executionPlan: null })
+    .where(eq(projectsTable.id, params.data.id));
+
+  // Insert fresh CEO task
+  await db.insert(agentTasksTable).values({
+    projectId: params.data.id,
+    agentType: "ceo",
+    agentName: "AI CEO",
+    status: "pending",
+  });
+
+  const updatedProject = { ...project, executionPlan: null };
+
+  // Run CEO in background — CEO will orchestrate the rest
+  runAgentForProject(params.data.id, "ceo", updatedProject).catch((err) => {
+    logger.error({ err, projectId: params.data.id }, "CEO orchestrator failed in background");
+  });
 
   res.json({
     projectId: params.data.id,
-    agentsTriggered: agentTypes,
-    message: "All agents triggered. Running in background.",
+    message: "CEO agent started. Execution plan will be generated automatically.",
   });
 });
 
