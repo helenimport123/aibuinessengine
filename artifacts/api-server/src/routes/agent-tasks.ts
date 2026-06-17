@@ -3,7 +3,10 @@ import { and, desc, eq, isNull, or } from "drizzle-orm";
 import { db, agentTasksTable, projectsTable, agentRunsTable } from "@workspace/db";
 import { RunAgentParams, GetTaskParams } from "@workspace/api-zod";
 import { runAgentForProject } from "../lib/agents";
+import { enqueueAgentJob } from "../lib/bullmq-queue";
+import { emitJobEvent } from "../lib/queue";
 import { requireAuth, getAuthUser } from "../middlewares/auth";
+import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
 
@@ -63,7 +66,7 @@ router.get("/tasks/:id", requireAuth, async (req, res): Promise<void> => {
   res.json(formatTask(row.task));
 });
 
-// GET /tasks/:id/runs — list all runs for a task
+// GET /tasks/:id/runs
 router.get("/tasks/:id/runs", requireAuth, async (req, res): Promise<void> => {
   const userId = getAuthUser(req);
   const params = GetTaskParams.safeParse(req.params);
@@ -92,7 +95,7 @@ router.get("/tasks/:id/runs", requireAuth, async (req, res): Promise<void> => {
   res.json(runs.map(formatRun));
 });
 
-// POST /projects/:id/agents/:agentType/run  — SSE streaming
+// POST /projects/:id/agents/:agentType/run  — SSE streaming (CEO runs here, sub-agents queued to BullMQ)
 router.post("/projects/:id/agents/:agentType/run", requireAuth, async (req, res): Promise<void> => {
   const userId = getAuthUser(req);
   const params = RunAgentParams.safeParse(req.params);
@@ -136,7 +139,37 @@ router.post("/projects/:id/agents/:agentType/run", requireAuth, async (req, res)
   };
 
   try {
-    await runAgentForProject(params.data.id, params.data.agentType, project, sendEvent as any);
+    await runAgentForProject(
+      params.data.id,
+      params.data.agentType,
+      project,
+      sendEvent as any,
+      // CEO orchestration callback: enqueue sub-agent tasks to BullMQ
+      async (tasks) => {
+        for (const t of tasks) {
+          try {
+            const jobId = await enqueueAgentJob({
+              taskId: t.id,
+              projectId: t.projectId,
+              agentType: t.agentType,
+              agentName: t.agentName,
+              userId: project.userId ?? null,
+            });
+            emitJobEvent({
+              type: "job_queued",
+              taskId: t.id,
+              agentType: t.agentType,
+              agentName: t.agentName,
+              projectId: t.projectId,
+              projectName: t.projectName,
+            });
+            logger.info({ jobId, taskId: t.id, agentType: t.agentType }, "Sub-agent enqueued to BullMQ");
+          } catch (err) {
+            logger.error({ err, taskId: t.id }, "Failed to enqueue sub-agent task");
+          }
+        }
+      }
+    );
   } catch (err) {
     sendEvent({ type: "error", message: String(err), done: true });
   } finally {

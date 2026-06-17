@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { jobBus, type JobEvent } from "../lib/queue";
-import { worker } from "../lib/worker";
+import { agentQueue } from "../lib/bullmq-queue";
 
 const router: IRouter = Router();
 
@@ -46,7 +46,7 @@ router.get("/jobs", async (_req, res): Promise<void> => {
   res.json(jobs);
 });
 
-// GET /api/jobs/stats — live queue stats
+// GET /api/jobs/stats — queue stats (BullMQ + DB counts)
 router.get("/jobs/stats", async (_req, res): Promise<void> => {
   const rows = await db.execute<{ status: string; count: string }>(sql`
     SELECT status, COUNT(*)::text AS count
@@ -58,16 +58,72 @@ router.get("/jobs/stats", async (_req, res): Promise<void> => {
   for (const r of raw) {
     counts[r.status] = parseInt(r.count, 10);
   }
+
+  // BullMQ queue counts (Redis)
+  let queueStats: Record<string, number> = {};
+  try {
+    const [waiting, active, failed, completed, delayed] = await Promise.all([
+      agentQueue.getWaitingCount(),
+      agentQueue.getActiveCount(),
+      agentQueue.getFailedCount(),
+      agentQueue.getCompletedCount(),
+      agentQueue.getDelayedCount(),
+    ]);
+    queueStats = { waiting, active, failed, completed, delayed };
+  } catch {
+    queueStats = { error: 1 };
+  }
+
+  // Worker heartbeats
+  const heartbeats = await db.execute<{
+    worker_id: string;
+    last_seen_at: string;
+    active_jobs: number;
+    completed_jobs: number;
+    failed_jobs: number;
+    processed_jobs: number;
+  }>(sql`
+    SELECT worker_id, last_seen_at, active_jobs, completed_jobs, failed_jobs, processed_jobs
+    FROM worker_heartbeat
+    ORDER BY last_seen_at DESC
+    LIMIT 10
+  `).catch(() => ({ rows: [] } as any));
+  const workers = (heartbeats as any).rows ?? heartbeats;
+
   res.json({
-    pending: counts.pending ?? 0,
-    running: counts.running ?? 0,
-    completed: counts.completed ?? 0,
-    failed: counts.failed ?? 0,
-    workers: 1,
-    workerId: worker.workerId,
-    workerActive: worker.activeCount,
-    workerConcurrency: parseInt(process.env.WORKER_CONCURRENCY ?? "3", 10),
+    db: {
+      pending: counts.pending ?? 0,
+      running: counts.running ?? 0,
+      completed: counts.completed ?? 0,
+      failed: counts.failed ?? 0,
+    },
+    queue: queueStats,
+    workers,
   });
+});
+
+// GET /api/jobs/dlq — dead letter queue entries
+router.get("/jobs/dlq", async (_req, res): Promise<void> => {
+  const rows = await db.execute<{
+    id: number;
+    task_id: number | null;
+    agent_type: string;
+    agent_name: string;
+    project_id: number;
+    failure_reason: string;
+    attempt_count: number;
+    last_attempt_at: string;
+    resolved_at: string | null;
+    created_at: string;
+  }>(sql`
+    SELECT id, task_id, agent_type, agent_name, project_id, failure_reason,
+           attempt_count, last_attempt_at, resolved_at, created_at
+    FROM dead_letter_queue
+    WHERE resolved_at IS NULL
+    ORDER BY created_at DESC
+    LIMIT 50
+  `);
+  res.json((rows as any).rows ?? rows);
 });
 
 // GET /api/jobs/stream — SSE real-time job events
