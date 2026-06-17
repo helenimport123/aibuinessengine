@@ -13,8 +13,9 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { Play, Activity, CheckCircle2, XCircle, Clock, Trash2, ArrowLeft, Loader2 } from "lucide-react";
+import { Play, Activity, CheckCircle2, XCircle, Clock, Trash2, ArrowLeft, Loader2, FileDown } from "lucide-react";
 import { AGENT_CONFIG, AgentType } from "@/lib/constants";
+import { generateBusinessPlanPdf } from "@/lib/export-pdf";
 
 export default function ProjectDetail() {
   const [, params] = useRoute("/projects/:id");
@@ -32,6 +33,20 @@ export default function ProjectDetail() {
 
   const deleteProject = useDeleteProject();
   const [isRunningAll, setIsRunningAll] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+
+  const handleExportPdf = () => {
+    if (!project) return;
+    setIsExporting(true);
+    try {
+      generateBusinessPlanPdf(project);
+      toast({ title: "Xuất PDF thành công", description: "File đang được tải xuống." });
+    } catch {
+      toast({ variant: "destructive", title: "Lỗi", description: "Không thể xuất PDF." });
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   const handleRunAll = async () => {
     if (!project) return;
@@ -123,6 +138,15 @@ export default function ProjectDetail() {
             <Button variant="outline" className="border-destructive/30 text-destructive hover:bg-destructive/10" onClick={handleDelete}>
               <Trash2 className="w-4 h-4 mr-2" />
               TERMINATE
+            </Button>
+            <Button
+              variant="outline"
+              className="border-primary/30 text-primary hover:bg-primary/10 font-mono"
+              onClick={handleExportPdf}
+              disabled={isExporting}
+            >
+              {isExporting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <FileDown className="w-4 h-4 mr-2" />}
+              XUẤT PDF
             </Button>
             <Button 
               className="bg-primary hover:bg-primary/80 text-primary-foreground font-bold shadow-[0_0_15px_rgba(34,211,238,0.4)]"

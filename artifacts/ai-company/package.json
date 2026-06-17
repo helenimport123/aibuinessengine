@@ -76,6 +76,7 @@
     "zod": "catalog:"
   },
   "dependencies": {
+    "jspdf": "^4.2.1",
     "react-markdown": "^10.1.0"
   }
 }
