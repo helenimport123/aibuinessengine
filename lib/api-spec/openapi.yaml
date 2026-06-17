@@ -1,22 +1,26 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: AI Company-in-a-Box API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: projects
+    description: Business project operations
+  - name: agents
+    description: AI agent task operations
+  - name: openai
+    description: OpenAI AI chat operations
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +28,320 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /projects:
+    get:
+      operationId: listProjects
+      tags: [projects]
+      summary: List all business projects
+      responses:
+        "200":
+          description: List of projects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Project"
+    post:
+      operationId: createProject
+      tags: [projects]
+      summary: Create a new business project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectInput"
+      responses:
+        "201":
+          description: Created project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+
+  /projects/{id}:
+    get:
+      operationId: getProject
+      tags: [projects]
+      summary: Get a project with all agent tasks
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Project with tasks
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectWithTasks"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    delete:
+      operationId: deleteProject
+      tags: [projects]
+      summary: Delete a project
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /projects/{id}/summary:
+    get:
+      operationId: getProjectSummary
+      tags: [projects]
+      summary: Get project dashboard summary
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Project summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectSummary"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /projects/{id}/run-all:
+    post:
+      operationId: runAllAgents
+      tags: [projects]
+      summary: Trigger all AI agents to run for a project
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: All agents triggered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunAllResult"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /projects/{id}/agents/{agentType}/run:
+    post:
+      operationId: runAgent
+      tags: [agents]
+      summary: Trigger a specific AI agent to run (SSE stream)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: agentType
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [ceo, marketing, sales, cskh, hr, accountant, legal]
+      responses:
+        "200":
+          description: SSE stream of agent output
+          content:
+            text/event-stream: {}
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /tasks:
+    get:
+      operationId: listTasks
+      tags: [agents]
+      summary: List all agent tasks
+      responses:
+        "200":
+          description: List of tasks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AgentTask"
+
+  /tasks/{id}:
+    get:
+      operationId: getTask
+      tags: [agents]
+      summary: Get an agent task
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Agent task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentTask"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /openai/conversations:
+    get:
+      operationId: listOpenaiConversations
+      tags: [openai]
+      summary: List all conversations
+      responses:
+        "200":
+          description: List of conversations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/OpenaiConversation"
+    post:
+      operationId: createOpenaiConversation
+      tags: [openai]
+      summary: Create a new conversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OpenaiConversationInput"
+      responses:
+        "201":
+          description: Created conversation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenaiConversation"
+
+  /openai/conversations/{id}:
+    get:
+      operationId: getOpenaiConversation
+      tags: [openai]
+      summary: Get conversation with messages
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Conversation with messages
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenaiConversationWithMessages"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    delete:
+      operationId: deleteOpenaiConversation
+      tags: [openai]
+      summary: Delete a conversation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /openai/conversations/{id}/messages:
+    get:
+      operationId: listOpenaiMessages
+      tags: [openai]
+      summary: List messages in a conversation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of messages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/OpenaiMessage"
+    post:
+      operationId: sendOpenaiMessage
+      tags: [openai]
+      summary: Send a text message (SSE stream)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OpenaiMessageInput"
+      responses:
+        "200":
+          description: SSE stream of assistant text
+          content:
+            text/event-stream: {}
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +352,255 @@ components:
       required:
         - status
 
+    Project:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        businessIdea:
+          type: string
+        industry:
+          type: ["string", "null"]
+        targetMarket:
+          type: ["string", "null"]
+        status:
+          type: string
+          enum: [draft, running, completed]
+        completionPercent:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - name
+        - businessIdea
+        - industry
+        - targetMarket
+        - status
+        - completionPercent
+        - createdAt
+
+    ProjectInput:
+      type: object
+      properties:
+        name:
+          type: string
+        businessIdea:
+          type: string
+        industry:
+          type: string
+        targetMarket:
+          type: string
+      required:
+        - name
+        - businessIdea
+
+    ProjectWithTasks:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        businessIdea:
+          type: string
+        industry:
+          type: ["string", "null"]
+        targetMarket:
+          type: ["string", "null"]
+        status:
+          type: string
+          enum: [draft, running, completed]
+        completionPercent:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        tasks:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentTask"
+      required:
+        - id
+        - name
+        - businessIdea
+        - industry
+        - targetMarket
+        - status
+        - completionPercent
+        - createdAt
+        - tasks
+
+    ProjectSummary:
+      type: object
+      properties:
+        projectId:
+          type: integer
+        projectName:
+          type: string
+        businessIdea:
+          type: string
+        totalAgents:
+          type: integer
+        completedAgents:
+          type: integer
+        runningAgents:
+          type: integer
+        pendingAgents:
+          type: integer
+        failedAgents:
+          type: integer
+        completionPercent:
+          type: integer
+        status:
+          type: string
+        tasks:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentTask"
+      required:
+        - projectId
+        - projectName
+        - businessIdea
+        - totalAgents
+        - completedAgents
+        - runningAgents
+        - pendingAgents
+        - failedAgents
+        - completionPercent
+        - status
+        - tasks
+
+    RunAllResult:
+      type: object
+      properties:
+        projectId:
+          type: integer
+        agentsTriggered:
+          type: array
+          items:
+            type: string
+        message:
+          type: string
+      required:
+        - projectId
+        - agentsTriggered
+        - message
+
+    AgentTask:
+      type: object
+      properties:
+        id:
+          type: integer
+        projectId:
+          type: integer
+        agentType:
+          type: string
+          enum: [ceo, marketing, sales, cskh, hr, accountant, legal]
+        agentName:
+          type: string
+        status:
+          type: string
+          enum: [pending, running, completed, failed]
+        output:
+          type: ["string", "null"]
+        errorMessage:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: ["string", "null"]
+      required:
+        - id
+        - projectId
+        - agentType
+        - agentName
+        - status
+        - output
+        - errorMessage
+        - createdAt
+        - completedAt
+
+    OpenaiConversation:
+      type: object
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - title
+        - createdAt
+
+    OpenaiMessage:
+      type: object
+      properties:
+        id:
+          type: integer
+        conversationId:
+          type: integer
+        role:
+          type: string
+        content:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - conversationId
+        - role
+        - content
+        - createdAt
+
+    OpenaiConversationInput:
+      type: object
+      properties:
+        title:
+          type: string
+      required:
+        - title
+
+    OpenaiMessageInput:
+      type: object
+      properties:
+        content:
+          type: string
+      required:
+        - content
+
+    OpenaiConversationWithMessages:
+      type: object
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenaiMessage"
+      required:
+        - id
+        - title
+        - createdAt
+        - messages
+
+    ApiError:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
