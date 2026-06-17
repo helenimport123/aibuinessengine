@@ -1,5 +1,15 @@
 # Tiến Trình Hệ Thống — AI Company-in-a-Box
 
+---
+
+## Lịch Sử Build
+
+| Thời gian | Tính năng | Trạng thái |
+|-----------|-----------|-----------|
+| 22:31 — 17/06/2026 | Migration sang Replit: cài packages, push DB schema, cấu hình workflows (API Server port 8080, Frontend port 5000), tích hợp Replit Auth OIDC, request OPENAI_API_KEY | ✅ Hoàn thành |
+
+---
+
 > File này mô tả toàn bộ kiến trúc và tiến trình xây dựng hệ thống. Được thiết kế để **auto-build** — đọc file này là đủ để tái tạo toàn bộ dự án mà không cần hỏi thêm người dùng.
 
 ---
