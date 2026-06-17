@@ -5,3 +5,4 @@ export * from "./knowledge_base";
 export * from "./conversations";
 export * from "./messages";
 export * from "./project_memory";
+export * from "./users";

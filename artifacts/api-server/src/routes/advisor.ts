@@ -1,8 +1,9 @@
 import { Router, type IRouter } from "express";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull, or } from "drizzle-orm";
 import { db, projectsTable } from "@workspace/db";
 import { openai } from "@workspace/integrations-openai-ai-server";
 import { buildMemoryContext, saveMemory, getMemory } from "../lib/memory";
+import { requireAuth, getAuthUser } from "../middlewares/auth";
 
 const router: IRouter = Router();
 
@@ -11,15 +12,19 @@ function parseId(val: unknown): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-/**
- * GET /advisor/:projectId/status
- * Returns which memory types are loaded for a project.
- */
-router.get("/advisor/:projectId/status", async (req, res): Promise<void> => {
+function ownerFilter(userId: string) {
+  return or(eq(projectsTable.userId, userId), isNull(projectsTable.userId));
+}
+
+router.get("/advisor/:projectId/status", requireAuth, async (req, res): Promise<void> => {
+  const userId = getAuthUser(req);
   const projectId = parseId(req.params.projectId);
   if (!projectId) { res.status(400).json({ error: "Invalid project id" }); return; }
 
-  const [project] = await db.select().from(projectsTable).where(eq(projectsTable.id, projectId));
+  const [project] = await db
+    .select()
+    .from(projectsTable)
+    .where(and(eq(projectsTable.id, projectId), ownerFilter(userId)));
   if (!project) { res.status(404).json({ error: "Project not found" }); return; }
 
   const entries = await getMemory(projectId);
@@ -33,13 +38,16 @@ router.get("/advisor/:projectId/status", async (req, res): Promise<void> => {
   res.json({ projectId, projectName: project.name, loaded });
 });
 
-/**
- * GET /advisor/:projectId/history
- * Returns recent chat_history memory entries for the project.
- */
-router.get("/advisor/:projectId/history", async (req, res): Promise<void> => {
+router.get("/advisor/:projectId/history", requireAuth, async (req, res): Promise<void> => {
+  const userId = getAuthUser(req);
   const projectId = parseId(req.params.projectId);
   if (!projectId) { res.status(400).json({ error: "Invalid project id" }); return; }
+
+  const [project] = await db
+    .select()
+    .from(projectsTable)
+    .where(and(eq(projectsTable.id, projectId), ownerFilter(userId)));
+  if (!project) { res.status(404).json({ error: "Project not found" }); return; }
 
   const entries = await getMemory(projectId, "chat_history");
   res.json(
@@ -51,24 +59,20 @@ router.get("/advisor/:projectId/history", async (req, res): Promise<void> => {
   );
 });
 
-/**
- * POST /advisor/:projectId/ask  — SSE streaming
- * Body: { question: string }
- *
- * The Advisor Agent reads ALL project memory before answering.
- * No conversation thread management — each question is answered directly.
- */
-router.post("/advisor/:projectId/ask", async (req, res): Promise<void> => {
+router.post("/advisor/:projectId/ask", requireAuth, async (req, res): Promise<void> => {
+  const userId = getAuthUser(req);
   const projectId = parseId(req.params.projectId);
   if (!projectId) { res.status(400).json({ error: "Invalid project id" }); return; }
 
   const question = typeof req.body?.question === "string" ? req.body.question.trim() : "";
   if (!question) { res.status(400).json({ error: "question is required" }); return; }
 
-  const [project] = await db.select().from(projectsTable).where(eq(projectsTable.id, projectId));
+  const [project] = await db
+    .select()
+    .from(projectsTable)
+    .where(and(eq(projectsTable.id, projectId), ownerFilter(userId)));
   if (!project) { res.status(404).json({ error: "Project not found" }); return; }
 
-  // Load ALL project memory
   const memoryContext = await buildMemoryContext(projectId, question);
 
   const systemPrompt = `Bạn là Advisor Agent — cố vấn kinh doanh tổng hợp cho dự án "${project.name}".
@@ -114,7 +118,6 @@ Nguyên tắc trả lời:
       }
     }
 
-    // Save exchange to project memory as chat_history
     const snapshot = `[Câu hỏi]: ${question}\n[Advisor]: ${fullResponse}`;
     await saveMemory(projectId, "chat_history", snapshot).catch(() => {});
 

@@ -1,8 +1,9 @@
 import { Router, type IRouter } from "express";
-import { eq, desc } from "drizzle-orm";
+import { and, desc, eq, isNull, or } from "drizzle-orm";
 import { db, agentTasksTable, projectsTable, agentRunsTable } from "@workspace/db";
 import { RunAgentParams, GetTaskParams } from "@workspace/api-zod";
 import { runAgentForProject } from "../lib/agents";
+import { requireAuth, getAuthUser } from "../middlewares/auth";
 
 const router: IRouter = Router();
 
@@ -23,41 +24,62 @@ function formatRun(r: typeof agentRunsTable.$inferSelect) {
   };
 }
 
+function ownerFilter(userId: string) {
+  return or(eq(projectsTable.userId, userId), isNull(projectsTable.userId));
+}
+
 // GET /tasks
-router.get("/tasks", async (_req, res): Promise<void> => {
+router.get("/tasks", requireAuth, async (req, res): Promise<void> => {
+  const userId = getAuthUser(req);
   const tasks = await db
-    .select()
+    .select({ task: agentTasksTable })
     .from(agentTasksTable)
+    .innerJoin(projectsTable, eq(agentTasksTable.projectId, projectsTable.id))
+    .where(ownerFilter(userId))
     .orderBy(agentTasksTable.createdAt);
-  res.json(tasks.map(formatTask));
+  res.json(tasks.map((r) => formatTask(r.task)));
 });
 
 // GET /tasks/:id
-router.get("/tasks/:id", async (req, res): Promise<void> => {
+router.get("/tasks/:id", requireAuth, async (req, res): Promise<void> => {
+  const userId = getAuthUser(req);
   const params = GetTaskParams.safeParse(req.params);
   if (!params.success) {
     res.status(400).json({ error: params.error.message });
     return;
   }
 
-  const [task] = await db
-    .select()
+  const [row] = await db
+    .select({ task: agentTasksTable })
     .from(agentTasksTable)
-    .where(eq(agentTasksTable.id, params.data.id));
+    .innerJoin(projectsTable, eq(agentTasksTable.projectId, projectsTable.id))
+    .where(and(eq(agentTasksTable.id, params.data.id), ownerFilter(userId)));
 
-  if (!task) {
+  if (!row) {
     res.status(404).json({ error: "Task not found" });
     return;
   }
 
-  res.json(formatTask(task));
+  res.json(formatTask(row.task));
 });
 
 // GET /tasks/:id/runs — list all runs for a task
-router.get("/tasks/:id/runs", async (req, res): Promise<void> => {
+router.get("/tasks/:id/runs", requireAuth, async (req, res): Promise<void> => {
+  const userId = getAuthUser(req);
   const params = GetTaskParams.safeParse(req.params);
   if (!params.success) {
     res.status(400).json({ error: params.error.message });
+    return;
+  }
+
+  const [taskRow] = await db
+    .select({ task: agentTasksTable })
+    .from(agentTasksTable)
+    .innerJoin(projectsTable, eq(agentTasksTable.projectId, projectsTable.id))
+    .where(and(eq(agentTasksTable.id, params.data.id), ownerFilter(userId)));
+
+  if (!taskRow) {
+    res.status(404).json({ error: "Task not found" });
     return;
   }
 
@@ -71,7 +93,8 @@ router.get("/tasks/:id/runs", async (req, res): Promise<void> => {
 });
 
 // POST /projects/:id/agents/:agentType/run  — SSE streaming
-router.post("/projects/:id/agents/:agentType/run", async (req, res): Promise<void> => {
+router.post("/projects/:id/agents/:agentType/run", requireAuth, async (req, res): Promise<void> => {
+  const userId = getAuthUser(req);
   const params = RunAgentParams.safeParse(req.params);
   if (!params.success) {
     res.status(400).json({ error: params.error.message });
@@ -81,14 +104,18 @@ router.post("/projects/:id/agents/:agentType/run", async (req, res): Promise<voi
   const [project] = await db
     .select()
     .from(projectsTable)
-    .where(eq(projectsTable.id, params.data.id));
+    .where(
+      and(
+        eq(projectsTable.id, params.data.id),
+        or(eq(projectsTable.userId, userId), isNull(projectsTable.userId))
+      )
+    );
 
   if (!project) {
     res.status(404).json({ error: "Project not found" });
     return;
   }
 
-  // 409 guard — block if another execution (worker or SSE) is already running
   const allTasks = await db
     .select()
     .from(agentTasksTable)
@@ -99,7 +126,6 @@ router.post("/projects/:id/agents/:agentType/run", async (req, res): Promise<voi
     return;
   }
 
-  // Set SSE headers
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");

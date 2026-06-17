@@ -1,9 +1,10 @@
 import { Router, type IRouter } from "express";
-import { eq, desc } from "drizzle-orm";
+import { and, desc, eq, isNull, or } from "drizzle-orm";
 import { db, conversations, messages, projectsTable, knowledgeBaseTable } from "@workspace/db";
 import { openai } from "@workspace/integrations-openai-ai-server";
 import { buildProjectContext } from "../lib/rag";
 import { saveMemory } from "../lib/memory";
+import { requireAuth, getAuthUser } from "../middlewares/auth";
 
 const router: IRouter = Router();
 
@@ -19,10 +20,25 @@ function formatMsg(m: typeof messages.$inferSelect) {
   return { ...m, createdAt: m.createdAt.toISOString() };
 }
 
+function projectOwnerFilter(userId: string) {
+  return or(eq(projectsTable.userId, userId), isNull(projectsTable.userId));
+}
+
+function convOwnerFilter(userId: string) {
+  return or(eq(conversations.userId, userId), isNull(conversations.userId));
+}
+
 // GET /chat/projects/:id/conversations
-router.get("/chat/projects/:id/conversations", async (req, res): Promise<void> => {
+router.get("/chat/projects/:id/conversations", requireAuth, async (req, res): Promise<void> => {
+  const userId = getAuthUser(req);
   const id = parseId(req.params.id);
   if (!id) { res.status(400).json({ error: "Invalid project id" }); return; }
+
+  const [project] = await db
+    .select()
+    .from(projectsTable)
+    .where(and(eq(projectsTable.id, id), projectOwnerFilter(userId)));
+  if (!project) { res.status(404).json({ error: "Project not found" }); return; }
 
   const convs = await db
     .select()
@@ -34,31 +50,40 @@ router.get("/chat/projects/:id/conversations", async (req, res): Promise<void> =
 });
 
 // POST /chat/projects/:id/conversations
-router.post("/chat/projects/:id/conversations", async (req, res): Promise<void> => {
+router.post("/chat/projects/:id/conversations", requireAuth, async (req, res): Promise<void> => {
+  const userId = getAuthUser(req);
   const id = parseId(req.params.id);
   if (!id) { res.status(400).json({ error: "Invalid project id" }); return; }
 
-  const [project] = await db.select().from(projectsTable).where(eq(projectsTable.id, id));
+  const [project] = await db
+    .select()
+    .from(projectsTable)
+    .where(and(eq(projectsTable.id, id), projectOwnerFilter(userId)));
   if (!project) { res.status(404).json({ error: "Project not found" }); return; }
 
-  const title = typeof req.body?.title === "string" && req.body.title.trim()
-    ? req.body.title.trim()
-    : `Chat về ${project.name}`;
+  const title =
+    typeof req.body?.title === "string" && req.body.title.trim()
+      ? req.body.title.trim()
+      : `Chat về ${project.name}`;
 
   const [conv] = await db
     .insert(conversations)
-    .values({ projectId: id, title })
+    .values({ userId, projectId: id, title })
     .returning();
 
   res.status(201).json(formatConv(conv));
 });
 
 // GET /chat/conversations/:convId
-router.get("/chat/conversations/:convId", async (req, res): Promise<void> => {
+router.get("/chat/conversations/:convId", requireAuth, async (req, res): Promise<void> => {
+  const userId = getAuthUser(req);
   const convId = parseId(req.params.convId);
   if (!convId) { res.status(400).json({ error: "Invalid conversation id" }); return; }
 
-  const [conv] = await db.select().from(conversations).where(eq(conversations.id, convId));
+  const [conv] = await db
+    .select()
+    .from(conversations)
+    .where(and(eq(conversations.id, convId), convOwnerFilter(userId)));
   if (!conv) { res.status(404).json({ error: "Conversation not found" }); return; }
 
   const msgs = await db
@@ -71,28 +96,35 @@ router.get("/chat/conversations/:convId", async (req, res): Promise<void> => {
 });
 
 // DELETE /chat/conversations/:convId
-router.delete("/chat/conversations/:convId", async (req, res): Promise<void> => {
+router.delete("/chat/conversations/:convId", requireAuth, async (req, res): Promise<void> => {
+  const userId = getAuthUser(req);
   const convId = parseId(req.params.convId);
   if (!convId) { res.status(400).json({ error: "Invalid conversation id" }); return; }
 
-  const [deleted] = await db.delete(conversations).where(eq(conversations.id, convId)).returning();
+  const [deleted] = await db
+    .delete(conversations)
+    .where(and(eq(conversations.id, convId), convOwnerFilter(userId)))
+    .returning();
   if (!deleted) { res.status(404).json({ error: "Conversation not found" }); return; }
 
   res.sendStatus(204);
 });
 
 // POST /chat/conversations/:convId/messages  — SSE with RAG + Memory
-router.post("/chat/conversations/:convId/messages", async (req, res): Promise<void> => {
+router.post("/chat/conversations/:convId/messages", requireAuth, async (req, res): Promise<void> => {
+  const userId = getAuthUser(req);
   const convId = parseId(req.params.convId);
   if (!convId) { res.status(400).json({ error: "Invalid conversation id" }); return; }
 
   const content = typeof req.body?.content === "string" ? req.body.content.trim() : "";
   if (!content) { res.status(400).json({ error: "content is required" }); return; }
 
-  const [conv] = await db.select().from(conversations).where(eq(conversations.id, convId));
+  const [conv] = await db
+    .select()
+    .from(conversations)
+    .where(and(eq(conversations.id, convId), convOwnerFilter(userId)));
   if (!conv) { res.status(404).json({ error: "Conversation not found" }); return; }
 
-  // Build system prompt — read project memory + RAG context first
   let systemPrompt =
     "Bạn là AI Business Advisor — chuyên gia tư vấn kinh doanh cho doanh nhân Việt Nam. " +
     "Trả lời ngắn gọn, thực tế, dễ áp dụng. Ngôn ngữ chính: tiếng Việt.";
@@ -110,10 +142,8 @@ router.post("/chat/conversations/:convId/messages", async (req, res): Promise<vo
     }
   }
 
-  // Save user message
   await db.insert(messages).values({ conversationId: convId, role: "user", content });
 
-  // Fetch last 20 messages for context
   const history = await db
     .select()
     .from(messages)
@@ -151,14 +181,12 @@ router.post("/chat/conversations/:convId/messages", async (req, res): Promise<vo
       }
     }
 
-    // Save assistant message
     await db.insert(messages).values({
       conversationId: convId,
       role: "assistant",
       content: fullResponse,
     });
 
-    // Save chat turn to project memory
     if (conv.projectId) {
       const chatSnapshot = `[User]: ${content}\n[Assistant]: ${fullResponse}`;
       await saveMemory(conv.projectId, "chat_history", chatSnapshot).catch(() => {});
@@ -173,9 +201,16 @@ router.post("/chat/conversations/:convId/messages", async (req, res): Promise<vo
 });
 
 // GET /chat/projects/:id/knowledge
-router.get("/chat/projects/:id/knowledge", async (req, res): Promise<void> => {
+router.get("/chat/projects/:id/knowledge", requireAuth, async (req, res): Promise<void> => {
+  const userId = getAuthUser(req);
   const id = parseId(req.params.id);
   if (!id) { res.status(400).json({ error: "Invalid project id" }); return; }
+
+  const [project] = await db
+    .select()
+    .from(projectsTable)
+    .where(and(eq(projectsTable.id, id), projectOwnerFilter(userId)));
+  if (!project) { res.status(404).json({ error: "Project not found" }); return; }
 
   const entries = await db
     .select()
@@ -193,9 +228,16 @@ router.get("/chat/projects/:id/knowledge", async (req, res): Promise<void> => {
 });
 
 // GET /chat/projects/:id/memory  — read project memory
-router.get("/chat/projects/:id/memory", async (req, res): Promise<void> => {
+router.get("/chat/projects/:id/memory", requireAuth, async (req, res): Promise<void> => {
+  const userId = getAuthUser(req);
   const id = parseId(req.params.id);
   if (!id) { res.status(400).json({ error: "Invalid project id" }); return; }
+
+  const [project] = await db
+    .select()
+    .from(projectsTable)
+    .where(and(eq(projectsTable.id, id), projectOwnerFilter(userId)));
+  if (!project) { res.status(404).json({ error: "Project not found" }); return; }
 
   const { getMemory } = await import("../lib/memory");
   const type = req.query.type as import("@workspace/db").MemoryType | undefined;

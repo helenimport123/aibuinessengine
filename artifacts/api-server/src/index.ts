@@ -1,13 +1,11 @@
-import app from "./app";
+import { createApp } from "./app";
 import { logger } from "./lib/logger";
 import { worker } from "./lib/worker";
 
 const rawPort = process.env["PORT"];
 
 if (!rawPort) {
-  throw new Error(
-    "PORT environment variable is required but was not provided.",
-  );
+  throw new Error("PORT environment variable is required but was not provided.");
 }
 
 const port = Number(rawPort);
@@ -15,6 +13,8 @@ const port = Number(rawPort);
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
+
+const app = await createApp();
 
 app.listen(port, (err) => {
   if (err) {
@@ -24,13 +24,11 @@ app.listen(port, (err) => {
 
   logger.info({ port }, "Server listening");
 
-  // Start background job worker
   worker.start().catch((err) => {
     logger.error({ err }, "Failed to start job worker");
   });
 });
 
-// Graceful shutdown
 process.on("SIGTERM", () => {
   logger.info("SIGTERM received — stopping worker");
   worker.stop();

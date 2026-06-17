@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull, or } from "drizzle-orm";
 import { db, projectsTable, agentTasksTable } from "@workspace/db";
 import {
   CreateProjectBody,
@@ -9,6 +9,7 @@ import {
 } from "@workspace/api-zod";
 import { logger } from "../lib/logger";
 import { emitJobEvent } from "../lib/queue";
+import { requireAuth, getAuthUser } from "../middlewares/auth";
 
 const router: IRouter = Router();
 
@@ -29,19 +30,30 @@ function formatTask(t: typeof agentTasksTable.$inferSelect) {
   };
 }
 
+// Ownership filter: user owns the project OR it's legacy (null userId)
+function ownerFilter(userId: string) {
+  return or(eq(projectsTable.userId, userId), isNull(projectsTable.userId));
+}
+
 // GET /api/healthz
 router.get("/healthz", (_req, res): void => {
   res.json({ status: "ok" });
 });
 
 // GET /api/projects
-router.get("/projects", async (_req, res): Promise<void> => {
-  const projects = await db.select().from(projectsTable).orderBy(projectsTable.createdAt);
+router.get("/projects", requireAuth, async (req, res): Promise<void> => {
+  const userId = getAuthUser(req);
+  const projects = await db
+    .select()
+    .from(projectsTable)
+    .where(ownerFilter(userId))
+    .orderBy(projectsTable.createdAt);
   res.json(projects.map(formatProject));
 });
 
 // POST /api/projects — creates project + CEO task (pending, not yet queued)
-router.post("/projects", async (req, res): Promise<void> => {
+router.post("/projects", requireAuth, async (req, res): Promise<void> => {
+  const userId = getAuthUser(req);
   const parsed = CreateProjectBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
@@ -51,6 +63,7 @@ router.post("/projects", async (req, res): Promise<void> => {
   const [project] = await db
     .insert(projectsTable)
     .values({
+      userId,
       name: parsed.data.name,
       businessIdea: parsed.data.businessIdea,
       industry: parsed.data.industry ?? null,
@@ -71,7 +84,8 @@ router.post("/projects", async (req, res): Promise<void> => {
 });
 
 // GET /api/projects/:id
-router.get("/projects/:id", async (req, res): Promise<void> => {
+router.get("/projects/:id", requireAuth, async (req, res): Promise<void> => {
+  const userId = getAuthUser(req);
   const params = GetProjectParams.safeParse(req.params);
   if (!params.success) {
     res.status(400).json({ error: params.error.message });
@@ -81,7 +95,7 @@ router.get("/projects/:id", async (req, res): Promise<void> => {
   const [project] = await db
     .select()
     .from(projectsTable)
-    .where(eq(projectsTable.id, params.data.id));
+    .where(and(eq(projectsTable.id, params.data.id), ownerFilter(userId)));
 
   if (!project) {
     res.status(404).json({ error: "Project not found" });
@@ -98,7 +112,8 @@ router.get("/projects/:id", async (req, res): Promise<void> => {
 });
 
 // DELETE /api/projects/:id
-router.delete("/projects/:id", async (req, res): Promise<void> => {
+router.delete("/projects/:id", requireAuth, async (req, res): Promise<void> => {
+  const userId = getAuthUser(req);
   const params = DeleteProjectParams.safeParse(req.params);
   if (!params.success) {
     res.status(400).json({ error: params.error.message });
@@ -107,7 +122,7 @@ router.delete("/projects/:id", async (req, res): Promise<void> => {
 
   const [deleted] = await db
     .delete(projectsTable)
-    .where(eq(projectsTable.id, params.data.id))
+    .where(and(eq(projectsTable.id, params.data.id), ownerFilter(userId)))
     .returning();
 
   if (!deleted) {
@@ -119,9 +134,8 @@ router.delete("/projects/:id", async (req, res): Promise<void> => {
 });
 
 // POST /api/projects/:id/run-all
-// Non-blocking: enqueues CEO into job queue and returns immediately.
-// Worker picks up CEO, CEO orchestrates remaining agents into the queue.
-router.post("/projects/:id/run-all", async (req, res): Promise<void> => {
+router.post("/projects/:id/run-all", requireAuth, async (req, res): Promise<void> => {
+  const userId = getAuthUser(req);
   const params = RunAllAgentsParams.safeParse(req.params);
   if (!params.success) {
     res.status(400).json({ error: params.error.message });
@@ -131,21 +145,19 @@ router.post("/projects/:id/run-all", async (req, res): Promise<void> => {
   const [project] = await db
     .select()
     .from(projectsTable)
-    .where(eq(projectsTable.id, params.data.id));
+    .where(and(eq(projectsTable.id, params.data.id), ownerFilter(userId)));
 
   if (!project) {
     res.status(404).json({ error: "Project not found" });
     return;
   }
 
-  // Reset project state
   await db.delete(agentTasksTable).where(eq(agentTasksTable.projectId, params.data.id));
   await db
     .update(projectsTable)
     .set({ status: "running", completionPercent: 0, executionPlan: null })
     .where(eq(projectsTable.id, params.data.id));
 
-  // Enqueue CEO task — worker will pick it up, run it, then orchestrate rest
   const [ceoTask] = await db
     .insert(agentTasksTable)
     .values({
@@ -168,7 +180,6 @@ router.post("/projects/:id/run-all", async (req, res): Promise<void> => {
 
   logger.info({ projectId: project.id, taskId: ceoTask.id }, "CEO job enqueued via run-all");
 
-  // Return immediately — non-blocking
   res.status(202).json({
     projectId: params.data.id,
     taskId: ceoTask.id,
