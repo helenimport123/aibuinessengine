@@ -2,18 +2,23 @@ import fs from "node:fs";
 import OpenAI, { toFile } from "openai";
 import { Buffer } from "node:buffer";
 
-const apiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY ?? process.env.OPENAI_API_KEY;
-const baseURL = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
-
-if (!apiKey) {
-  throw new Error(
-    "OPENAI_API_KEY must be set. Did you forget to add it to Replit Secrets?",
-  );
+function createOpenAIClient(): OpenAI {
+  const apiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY ?? process.env.OPENAI_API_KEY;
+  const baseURL = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
+  if (!apiKey) {
+    throw new Error(
+      "OPENAI_API_KEY must be set. Did you forget to add it to Replit Secrets?",
+    );
+  }
+  return new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) });
 }
 
-export const openai = new OpenAI({
-  apiKey,
-  ...(baseURL ? { baseURL } : {}),
+let _client: OpenAI | null = null;
+export const openai: OpenAI = new Proxy({} as OpenAI, {
+  get(_target, prop) {
+    if (!_client) _client = createOpenAIClient();
+    return (_client as any)[prop];
+  },
 });
 
 export async function generateImageBuffer(
