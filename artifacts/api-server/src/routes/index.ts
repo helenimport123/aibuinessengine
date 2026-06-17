@@ -5,6 +5,7 @@ import agentTasksRouter from "./agent-tasks";
 import openaiConversationsRouter from "./openai-conversations";
 import chatRouter from "./chat";
 import jobsRouter from "./jobs";
+import advisorRouter from "./advisor";
 
 const router: IRouter = Router();
 
@@ -14,5 +15,6 @@ router.use(agentTasksRouter);
 router.use(openaiConversationsRouter);
 router.use(chatRouter);
 router.use(jobsRouter);
+router.use(advisorRouter);
 
 export default router;

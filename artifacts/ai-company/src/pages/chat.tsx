@@ -43,7 +43,8 @@ const SAMPLE_QUESTIONS = [
 ];
 
 export default function ChatPage() {
-  const { data: projects, isLoading: projectsLoading } = useListProjects();
+  const { data: projectsRaw, isLoading: projectsLoading } = useListProjects();
+  const projects: Project[] = Array.isArray(projectsRaw) ? projectsRaw : [];
   const { toast } = useToast();
 
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
