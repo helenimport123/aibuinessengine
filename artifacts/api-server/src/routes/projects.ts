@@ -8,7 +8,7 @@ import {
   RunAllAgentsParams,
 } from "@workspace/api-zod";
 import { logger } from "../lib/logger";
-import { runAgentForProject } from "../lib/agents";
+import { emitJobEvent } from "../lib/queue";
 
 const router: IRouter = Router();
 
@@ -25,6 +25,7 @@ function formatTask(t: typeof agentTasksTable.$inferSelect) {
     ...t,
     createdAt: t.createdAt.toISOString(),
     completedAt: t.completedAt ? t.completedAt.toISOString() : null,
+    queuedAt: t.queuedAt ? t.queuedAt.toISOString() : null,
   };
 }
 
@@ -35,14 +36,11 @@ router.get("/healthz", (_req, res): void => {
 
 // GET /api/projects
 router.get("/projects", async (_req, res): Promise<void> => {
-  const projects = await db
-    .select()
-    .from(projectsTable)
-    .orderBy(projectsTable.createdAt);
+  const projects = await db.select().from(projectsTable).orderBy(projectsTable.createdAt);
   res.json(projects.map(formatProject));
 });
 
-// POST /api/projects — creates project + CEO task only (CEO will orchestrate the rest)
+// POST /api/projects — creates project + CEO task (pending, not yet queued)
 router.post("/projects", async (req, res): Promise<void> => {
   const parsed = CreateProjectBody.safeParse(req.body);
   if (!parsed.success) {
@@ -121,7 +119,8 @@ router.delete("/projects/:id", async (req, res): Promise<void> => {
 });
 
 // POST /api/projects/:id/run-all
-// Resets project to CEO-only state and re-runs orchestration from scratch
+// Non-blocking: enqueues CEO into job queue and returns immediately.
+// Worker picks up CEO, CEO orchestrates remaining agents into the queue.
 router.post("/projects/:id/run-all", async (req, res): Promise<void> => {
   const params = RunAllAgentsParams.safeParse(req.params);
   if (!params.success) {
@@ -139,34 +138,41 @@ router.post("/projects/:id/run-all", async (req, res): Promise<void> => {
     return;
   }
 
-  // Delete all existing tasks and reset project state
-  await db
-    .delete(agentTasksTable)
-    .where(eq(agentTasksTable.projectId, params.data.id));
-
+  // Reset project state
+  await db.delete(agentTasksTable).where(eq(agentTasksTable.projectId, params.data.id));
   await db
     .update(projectsTable)
     .set({ status: "running", completionPercent: 0, executionPlan: null })
     .where(eq(projectsTable.id, params.data.id));
 
-  // Insert fresh CEO task
-  await db.insert(agentTasksTable).values({
-    projectId: params.data.id,
+  // Enqueue CEO task — worker will pick it up, run it, then orchestrate rest
+  const [ceoTask] = await db
+    .insert(agentTasksTable)
+    .values({
+      projectId: params.data.id,
+      agentType: "ceo",
+      agentName: "AI CEO",
+      status: "pending",
+      queuedAt: new Date(),
+    })
+    .returning();
+
+  emitJobEvent({
+    type: "job_queued",
+    taskId: ceoTask.id,
     agentType: "ceo",
     agentName: "AI CEO",
-    status: "pending",
+    projectId: project.id,
+    projectName: project.name,
   });
 
-  const updatedProject = { ...project, executionPlan: null };
+  logger.info({ projectId: project.id, taskId: ceoTask.id }, "CEO job enqueued via run-all");
 
-  // Run CEO in background — CEO will orchestrate the rest
-  runAgentForProject(params.data.id, "ceo", updatedProject).catch((err) => {
-    logger.error({ err, projectId: params.data.id }, "CEO orchestrator failed in background");
-  });
-
-  res.json({
+  // Return immediately — non-blocking
+  res.status(202).json({
     projectId: params.data.id,
-    message: "CEO agent started. Execution plan will be generated automatically.",
+    taskId: ceoTask.id,
+    message: "CEO job enqueued. Worker will process automatically.",
   });
 });
 

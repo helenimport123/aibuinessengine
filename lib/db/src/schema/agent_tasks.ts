@@ -15,6 +15,7 @@ export const agentTasksTable = pgTable("agent_tasks", {
   errorMessage: text("error_message"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   completedAt: timestamp("completed_at"),
+  queuedAt: timestamp("queued_at"),
 });
 
 export const insertAgentTaskSchema = createInsertSchema(agentTasksTable).omit({

@@ -1,0 +1,1 @@
+- [Job Queue Architecture](job-queue.md) — queuedAt timestamp distinguishes worker-queued vs user-pending tasks; worker uses FOR UPDATE SKIP LOCKED.

@@ -3,6 +3,7 @@ import { db, agentTasksTable, projectsTable, agentRunsTable } from "@workspace/d
 import { openai } from "@workspace/integrations-openai-ai-server";
 import { logger } from "./logger";
 import { syncTaskToKnowledgeBase } from "./rag";
+import { emitJobEvent } from "./queue";
 
 type Project = typeof projectsTable.$inferSelect;
 
@@ -174,10 +175,7 @@ async function fetchCeoExecutionPlan(
         role: "user",
         content: `Ý tưởng kinh doanh: ${project.businessIdea}\nNgành: ${project.industry ?? "chưa xác định"}\nThị trường: ${project.targetMarket ?? "chưa xác định"}`,
       },
-      {
-        role: "assistant",
-        content: ceoAnalysis,
-      },
+      { role: "assistant", content: ceoAnalysis },
       {
         role: "user",
         content: `Dựa trên phân tích trên, hãy xác định các AI agents nào CẦN THIẾT để thực thi kế hoạch kinh doanh này.
@@ -203,16 +201,22 @@ Chỉ chọn agents thực sự cần thiết cho ý tưởng này. Không nhấ
 async function createOrchestratedTasks(
   projectId: number,
   plan: ExecutionPlanItem[]
-): Promise<void> {
-  if (plan.length === 0) return;
-  await db.insert(agentTasksTable).values(
-    plan.map((item) => ({
-      projectId,
-      agentType: item.agent,
-      agentName: ALL_AGENT_LABELS[item.agent] ?? item.agent,
-      status: "pending" as const,
-    }))
-  );
+): Promise<Array<{ id: number; agentType: string }>> {
+  if (plan.length === 0) return [];
+  const now = new Date();
+  const created = await db
+    .insert(agentTasksTable)
+    .values(
+      plan.map((item) => ({
+        projectId,
+        agentType: item.agent,
+        agentName: ALL_AGENT_LABELS[item.agent] ?? item.agent,
+        status: "pending" as const,
+        queuedAt: now,
+      }))
+    )
+    .returning({ id: agentTasksTable.id, agentType: agentTasksTable.agentType });
+  return created;
 }
 
 export async function runAgentForProject(
@@ -222,9 +226,7 @@ export async function runAgentForProject(
   sendEvent?: SendEvent
 ): Promise<void> {
   const promptFn = AGENT_PROMPTS[agentType];
-  if (!promptFn) {
-    throw new Error(`Unknown agent type: ${agentType}`);
-  }
+  if (!promptFn) throw new Error(`Unknown agent type: ${agentType}`);
 
   const prompt = promptFn(project);
 
@@ -238,10 +240,7 @@ export async function runAgentForProject(
     .where(eq(agentTasksTable.projectId, projectId));
 
   const task = allTasks.find((r) => r.agentType === agentType);
-
-  if (!task) {
-    throw new Error(`Task not found for agent ${agentType}`);
-  }
+  if (!task) throw new Error(`Task not found for agent ${agentType}`);
 
   await db
     .update(agentTasksTable)
@@ -276,20 +275,15 @@ export async function runAgentForProject(
     sendEvent?.({ type: "progress", percent: 20 });
 
     let chunkCount = 0;
-
     for await (const chunk of stream) {
       const delta = chunk.choices[0]?.delta?.content ?? "";
       if (delta) {
         fullOutput += delta;
         chunkCount++;
         sendEvent?.({ type: "text", content: delta, text: delta });
-
-        const estimatedPercent = Math.min(agentType === "ceo" ? 75 : 90, 20 + Math.floor((fullOutput.length / 3000) * (agentType === "ceo" ? 55 : 70)));
-        if (chunkCount % 20 === 0) {
-          sendEvent?.({ type: "progress", percent: estimatedPercent });
-        }
+        const pct = Math.min(agentType === "ceo" ? 75 : 90, 20 + Math.floor((fullOutput.length / 3000) * (agentType === "ceo" ? 55 : 70)));
+        if (chunkCount % 20 === 0) sendEvent?.({ type: "progress", percent: pct });
       }
-
       if (chunk.usage) {
         inputTokens = chunk.usage.prompt_tokens ?? 0;
         outputTokens = chunk.usage.completion_tokens ?? 0;
@@ -299,7 +293,7 @@ export async function runAgentForProject(
     const totalTokens = inputTokens + outputTokens;
     const cost = (inputTokens / 1000) * GPT_INPUT_COST_PER_1K + (outputTokens / 1000) * GPT_OUTPUT_COST_PER_1K;
 
-    // ── CEO-specific: fetch execution plan then orchestrate ──────────────
+    // ── CEO orchestration ────────────────────────────────────────────────
     let executionPlan: ExecutionPlanItem[] = [];
     if (agentType === "ceo") {
       sendEvent?.({ type: "progress", percent: 80 });
@@ -309,24 +303,37 @@ export async function runAgentForProject(
         executionPlan = await fetchCeoExecutionPlan(project, fullOutput);
 
         if (executionPlan.length > 0) {
-          // Save plan to project BEFORE creating tasks (so completion % is accurate)
           await db
             .update(projectsTable)
             .set({ executionPlan: JSON.stringify(executionPlan) })
             .where(eq(projectsTable.id, projectId));
 
-          // Create task rows for selected agents
-          await createOrchestratedTasks(projectId, executionPlan);
+          const createdTasks = await createOrchestratedTasks(projectId, executionPlan);
 
           sendEvent?.({
             type: "log",
-            message: `[${ts()}] Kế hoạch: ${executionPlan.map((a) => a.agent.toUpperCase()).join(", ")} — đang kích hoạt...`,
+            message: `[${ts()}] Kế hoạch: ${executionPlan.map((a) => a.agent.toUpperCase()).join(", ")} — đã đưa vào queue.`,
           });
           sendEvent?.({ type: "plan", plan: executionPlan });
+
+          // Emit job_queued for each orchestrated task
+          for (const t of createdTasks) {
+            const planItem = executionPlan.find((e) => e.agent === t.agentType);
+            emitJobEvent({
+              type: "job_queued",
+              taskId: t.id,
+              agentType: t.agentType,
+              agentName: ALL_AGENT_LABELS[t.agentType] ?? t.agentType,
+              projectId,
+              projectName: project.name,
+            });
+            logger.info({ taskId: t.id, agentType: t.agentType, reason: planItem?.reason }, "Orchestrated task queued");
+          }
+          // Worker will pick them up automatically — no direct fire
         }
       } catch (planErr) {
         logger.error({ planErr, projectId }, "Failed to fetch CEO execution plan");
-        sendEvent?.({ type: "log", message: `[${ts()}] Không thể tạo execution plan, tiếp tục không có orchestration.` });
+        sendEvent?.({ type: "log", message: `[${ts()}] Không thể tạo execution plan.` });
       }
     }
     // ────────────────────────────────────────────────────────────────────
@@ -336,11 +343,7 @@ export async function runAgentForProject(
 
     await db
       .update(agentTasksTable)
-      .set({
-        status: "completed",
-        output: fullOutput,
-        completedAt: new Date(),
-      })
+      .set({ status: "completed", output: fullOutput, completedAt: new Date() })
       .where(eq(agentTasksTable.id, task.id));
 
     await syncTaskToKnowledgeBase(projectId, agentType, task.agentName, fullOutput).catch((e) =>
@@ -349,15 +352,9 @@ export async function runAgentForProject(
 
     await db
       .update(agentRunsTable)
-      .set({
-        status: "completed",
-        finishedAt: new Date(),
-        tokens: totalTokens,
-        cost,
-      })
+      .set({ status: "completed", finishedAt: new Date(), tokens: totalTokens, cost })
       .where(eq(agentRunsTable.id, run.id));
 
-    // Recalculate completion — query AFTER new orchestrated tasks were inserted
     const updatedTasks = await db
       .select()
       .from(agentTasksTable)
@@ -370,45 +367,18 @@ export async function runAgentForProject(
 
     await db
       .update(projectsTable)
-      .set({
-        completionPercent: percent,
-        status: allDone ? "completed" : "running",
-      })
+      .set({ completionPercent: percent, status: allDone ? "completed" : "running" })
       .where(eq(projectsTable.id, projectId));
 
     sendEvent?.({ type: "progress", percent: 100 });
-    sendEvent?.({
-      type: "log",
-      message: `[${ts()}] Hoàn thành ✓ — ${totalTokens.toLocaleString()} tokens — $${cost.toFixed(4)}`,
-    });
+    sendEvent?.({ type: "log", message: `[${ts()}] Hoàn thành ✓ — ${totalTokens.toLocaleString()} tokens — $${cost.toFixed(4)}` });
     sendEvent?.({ type: "done", tokens: totalTokens, cost, runId: run.id, done: true });
-
-    // Fire orchestrated agents in background (after done event so SSE closes cleanly)
-    if (agentType === "ceo" && executionPlan.length > 0) {
-      const freshProject = await db
-        .select()
-        .from(projectsTable)
-        .where(eq(projectsTable.id, projectId))
-        .then((r) => r[0]);
-
-      if (freshProject) {
-        for (const item of executionPlan) {
-          runAgentForProject(projectId, item.agent, freshProject).catch((err) => {
-            logger.error({ err, agent: item.agent, projectId }, "Orchestrated agent failed");
-          });
-        }
-      }
-    }
   } catch (err) {
     logger.error({ err, agentType, projectId }, "Agent failed");
 
     await db
       .update(agentTasksTable)
-      .set({
-        status: "failed",
-        errorMessage: String(err),
-        completedAt: new Date(),
-      })
+      .set({ status: "failed", errorMessage: String(err), completedAt: new Date() })
       .where(eq(agentTasksTable.id, task.id));
 
     await db
@@ -416,7 +386,6 @@ export async function runAgentForProject(
       .set({ status: "failed", finishedAt: new Date() })
       .where(eq(agentRunsTable.id, run.id));
 
-    // If CEO fails, reset project to draft so user can retry
     if (agentType === "ceo") {
       await db
         .update(projectsTable)
@@ -425,7 +394,6 @@ export async function runAgentForProject(
     }
 
     sendEvent?.({ type: "error", message: String(err), done: true });
-
     throw err;
   }
 }

@@ -11,6 +11,7 @@ export const agentRunsTable = pgTable("agent_runs", {
   status: text("status").notNull().default("running"),
   tokens: integer("tokens"),
   cost: doublePrecision("cost"),
+  workerId: text("worker_id"),
 });
 
 export type AgentRun = typeof agentRunsTable.$inferSelect;

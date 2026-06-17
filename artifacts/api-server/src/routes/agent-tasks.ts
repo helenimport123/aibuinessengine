@@ -11,6 +11,7 @@ function formatTask(t: typeof agentTasksTable.$inferSelect) {
     ...t,
     createdAt: t.createdAt.toISOString(),
     completedAt: t.completedAt ? t.completedAt.toISOString() : null,
+    queuedAt: t.queuedAt ? t.queuedAt.toISOString() : null,
   };
 }
 
@@ -84,6 +85,17 @@ router.post("/projects/:id/agents/:agentType/run", async (req, res): Promise<voi
 
   if (!project) {
     res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  // 409 guard — block if another execution (worker or SSE) is already running
+  const allTasks = await db
+    .select()
+    .from(agentTasksTable)
+    .where(eq(agentTasksTable.projectId, params.data.id));
+  const existingTask = allTasks.find((t) => t.agentType === params.data.agentType);
+  if (existingTask?.status === "running") {
+    res.status(409).json({ error: "Agent đang chạy. Vui lòng đợi hoàn thành." });
     return;
   }
 

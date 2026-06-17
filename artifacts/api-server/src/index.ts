@@ -1,5 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { worker } from "./lib/worker";
 
 const rawPort = process.env["PORT"];
 
@@ -22,4 +23,20 @@ app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
+
+  // Start background job worker
+  worker.start().catch((err) => {
+    logger.error({ err }, "Failed to start job worker");
+  });
+});
+
+// Graceful shutdown
+process.on("SIGTERM", () => {
+  logger.info("SIGTERM received — stopping worker");
+  worker.stop();
+});
+
+process.on("SIGINT", () => {
+  logger.info("SIGINT received — stopping worker");
+  worker.stop();
 });
