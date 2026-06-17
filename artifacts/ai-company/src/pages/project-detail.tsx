@@ -25,13 +25,34 @@ import {
   ChevronDown,
   ChevronUp,
   RefreshCw,
+  Terminal,
+  Coins,
 } from "lucide-react";
 import { AGENT_CONFIG, AGENT_ORDER, AgentType } from "@/lib/constants";
+
+type LogEntry = {
+  message: string;
+};
 
 type AgentStreamState = {
   streaming: boolean;
   text: string;
+  logs: LogEntry[];
+  progress: number;
+  tokens?: number;
+  cost?: number;
+  showLogs: boolean;
 };
+
+const defaultStreamState = (): AgentStreamState => ({
+  streaming: false,
+  text: "",
+  logs: [],
+  progress: 0,
+  tokens: undefined,
+  cost: undefined,
+  showLogs: false,
+});
 
 export default function ProjectDetail() {
   const [, params] = useRoute("/projects/:id");
@@ -50,16 +71,13 @@ export default function ProjectDetail() {
 
   const deleteProject = useDeleteProject();
 
-  // Per-agent streaming state
   const [agentStreams, setAgentStreams] = useState<Record<string, AgentStreamState>>({});
-  // Per-agent expanded/collapsed output
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  // Running-all flag
   const [runningAll, setRunningAll] = useState(false);
 
   const bottomRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const logBottomRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
-  // Auto-scroll when streaming
   useEffect(() => {
     for (const type of AGENT_ORDER) {
       if (agentStreams[type]?.streaming) {
@@ -68,15 +86,25 @@ export default function ProjectDetail() {
     }
   }, [agentStreams]);
 
+  // Auto-scroll logs
+  useEffect(() => {
+    for (const type of AGENT_ORDER) {
+      if (agentStreams[type]?.streaming && agentStreams[type]?.showLogs) {
+        logBottomRefs.current[type]?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+    }
+  }, [agentStreams]);
+
   const runAgent = useCallback(
     async (agentType: string) => {
       if (!projectId) return;
 
-      // Optimistic UI
-      setAgentStreams((prev) => ({ ...prev, [agentType]: { streaming: true, text: "" } }));
+      setAgentStreams((prev) => ({
+        ...prev,
+        [agentType]: { ...defaultStreamState(), streaming: true, showLogs: prev[agentType]?.showLogs ?? false },
+      }));
       setExpanded((prev) => ({ ...prev, [agentType]: true }));
 
-      // Optimistically mark task as running
       queryClient.setQueryData(getGetProjectQueryKey(projectId), (old: any) => {
         if (!old) return old;
         return {
@@ -114,28 +142,77 @@ export default function ProjectDetail() {
             if (!raw) continue;
             try {
               const evt = JSON.parse(raw);
-              if (evt.text) {
+
+              if (evt.type === "log") {
                 setAgentStreams((prev) => ({
                   ...prev,
                   [agentType]: {
+                    ...(prev[agentType] ?? defaultStreamState()),
+                    logs: [...(prev[agentType]?.logs ?? []), { message: evt.message }],
+                  },
+                }));
+              } else if (evt.type === "progress") {
+                setAgentStreams((prev) => ({
+                  ...prev,
+                  [agentType]: {
+                    ...(prev[agentType] ?? defaultStreamState()),
+                    progress: evt.percent,
+                  },
+                }));
+              } else if (evt.type === "text" || evt.text) {
+                const content = evt.content ?? evt.text ?? "";
+                setAgentStreams((prev) => ({
+                  ...prev,
+                  [agentType]: {
+                    ...(prev[agentType] ?? defaultStreamState()),
+                    text: (prev[agentType]?.text ?? "") + content,
                     streaming: true,
-                    text: (prev[agentType]?.text ?? "") + evt.text,
+                  },
+                }));
+              } else if (evt.type === "done" || evt.done) {
+                setAgentStreams((prev) => ({
+                  ...prev,
+                  [agentType]: {
+                    ...(prev[agentType] ?? defaultStreamState()),
+                    streaming: false,
+                    progress: 100,
+                    tokens: evt.tokens,
+                    cost: evt.cost,
+                  },
+                }));
+              } else if (evt.type === "error") {
+                setAgentStreams((prev) => ({
+                  ...prev,
+                  [agentType]: {
+                    ...(prev[agentType] ?? defaultStreamState()),
+                    streaming: false,
                   },
                 }));
               }
-              if (evt.done) break;
             } catch {
               /* ignore parse errors */
             }
           }
         }
 
-        // Stream finished — clear local stream and refetch from DB
-        setAgentStreams((prev) => ({ ...prev, [agentType]: { streaming: false, text: "" } }));
+        setAgentStreams((prev) => ({
+          ...prev,
+          [agentType]: {
+            ...(prev[agentType] ?? defaultStreamState()),
+            streaming: false,
+            text: "",
+          },
+        }));
         queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) });
         queryClient.invalidateQueries({ queryKey: getListProjectsQueryKey() });
       } catch (err) {
-        setAgentStreams((prev) => ({ ...prev, [agentType]: { streaming: false, text: "" } }));
+        setAgentStreams((prev) => ({
+          ...prev,
+          [agentType]: {
+            ...(prev[agentType] ?? defaultStreamState()),
+            streaming: false,
+          },
+        }));
         queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) });
         toast({
           variant: "destructive",
@@ -262,7 +339,7 @@ export default function ProjectDetail() {
           </div>
         </div>
 
-        {/* Progress */}
+        {/* Global Progress */}
         <div className="rounded-xl border border-primary/20 bg-card/30 p-4">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-mono text-primary uppercase tracking-wider">Tiến Độ Tổng Thể</span>
@@ -277,16 +354,18 @@ export default function ProjectDetail() {
             const config = AGENT_CONFIG[agentType];
             const Icon = config.icon;
             const task = project.tasks?.find((t) => t.agentType === agentType);
-            const stream = agentStreams[agentType];
-            const isStreaming = stream?.streaming ?? false;
-            const streamText = stream?.text ?? "";
+            const stream = agentStreams[agentType] ?? defaultStreamState();
+            const isStreaming = stream.streaming;
+            const streamText = stream.text;
             const isOpen = expanded[agentType] ?? false;
 
-            // What output to display: streamed text (live) or saved output (from DB)
             const displayOutput = isStreaming ? streamText : (task?.output ?? null);
             const hasOutput = !!displayOutput;
-
             const taskStatus = isStreaming ? "running" : (task?.status ?? "pending");
+
+            const hasLogs = stream.logs.length > 0;
+            const agentProgress = stream.progress;
+            const showAgentProgress = isStreaming && agentProgress > 0;
 
             return (
               <div
@@ -311,6 +390,41 @@ export default function ProjectDetail() {
                   </div>
 
                   <div className="flex items-center gap-2 shrink-0">
+                    {/* Token / cost info */}
+                    {stream.tokens !== undefined && stream.tokens > 0 && (
+                      <div className="flex items-center gap-1 text-[11px] font-mono text-muted-foreground border border-border/30 rounded px-2 py-1 bg-muted/10">
+                        <Coins className="w-3 h-3" />
+                        <span>{stream.tokens.toLocaleString()} tok</span>
+                        {stream.cost !== undefined && (
+                          <span className="text-green-400/80 ml-1">${stream.cost.toFixed(4)}</span>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Log toggle */}
+                    {hasLogs && (
+                      <button
+                        onClick={() =>
+                          setAgentStreams((prev) => ({
+                            ...prev,
+                            [agentType]: {
+                              ...(prev[agentType] ?? defaultStreamState()),
+                              showLogs: !prev[agentType]?.showLogs,
+                            },
+                          }))
+                        }
+                        className={`flex items-center gap-1 text-[11px] font-mono px-2 py-1 rounded border transition-colors ${
+                          stream.showLogs
+                            ? "border-primary/50 text-primary bg-primary/10"
+                            : "border-border/30 text-muted-foreground hover:text-white hover:border-border"
+                        }`}
+                        title="Toggle execution logs"
+                      >
+                        <Terminal className="w-3 h-3" />
+                        Logs
+                      </button>
+                    )}
+
                     {hasOutput && (
                       <button
                         onClick={() => setExpanded((p) => ({ ...p, [agentType]: !isOpen }))}
@@ -346,11 +460,42 @@ export default function ProjectDetail() {
                   </div>
                 </div>
 
-                {/* Streaming indicator */}
-                {isStreaming && (
-                  <div className={`px-4 pb-2 flex items-center gap-2 text-xs ${config.color} font-mono`}>
-                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
-                    AI đang phân tích...
+                {/* Per-agent progress bar */}
+                {showAgentProgress && (
+                  <div className="px-4 pb-3">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className={`text-[11px] font-mono ${config.color} flex items-center gap-1.5`}>
+                        <span className="inline-block w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
+                        AI đang xử lý...
+                      </span>
+                      <span className="text-[11px] font-mono text-muted-foreground">{agentProgress}%</span>
+                    </div>
+                    <div className="h-1 w-full rounded-full bg-muted/20 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all duration-500 ${config.progressColor ?? "bg-primary"}`}
+                        style={{ width: `${agentProgress}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Execution Logs Panel */}
+                {hasLogs && stream.showLogs && (
+                  <div className="mx-4 mb-3 rounded-lg bg-black/40 border border-border/30 overflow-hidden">
+                    <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border/20 bg-black/20">
+                      <Terminal className="w-3 h-3 text-muted-foreground" />
+                      <span className="text-[11px] font-mono text-muted-foreground uppercase tracking-wider">
+                        Execution Logs
+                      </span>
+                    </div>
+                    <div className="p-3 max-h-36 overflow-y-auto space-y-0.5 font-mono text-[11px] leading-relaxed">
+                      {stream.logs.map((entry, i) => (
+                        <div key={i} className="text-green-400/80">
+                          {entry.message}
+                        </div>
+                      ))}
+                      <div ref={(el) => { logBottomRefs.current[agentType] = el; }} />
+                    </div>
                   </div>
                 )}
 
@@ -370,7 +515,7 @@ export default function ProjectDetail() {
                   </div>
                 )}
 
-                {/* Empty state preview for completed tasks (collapsed) */}
+                {/* Collapsed preview for completed tasks */}
                 {hasOutput && !isOpen && !isStreaming && taskStatus === "completed" && (
                   <div
                     className="px-4 pb-4 cursor-pointer"

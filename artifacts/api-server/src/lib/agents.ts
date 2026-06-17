@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { db, agentTasksTable, projectsTable } from "@workspace/db";
+import { db, agentTasksTable, projectsTable, agentRunsTable } from "@workspace/db";
 import { openai } from "@workspace/integrations-openai-ai-server";
 import { logger } from "./logger";
 
@@ -59,7 +59,22 @@ Hãy xây dựng sales playbook đầy đủ:
 Viết bằng tiếng Việt với script mẫu cụ thể có thể dùng ngay.`,
 };
 
-type SendEvent = (data: object) => void;
+export type SseEvent =
+  | { type: "log"; message: string }
+  | { type: "progress"; percent: number }
+  | { type: "text"; content: string; text: string }
+  | { type: "status"; status: string }
+  | { type: "done"; tokens: number; cost: number; runId: number; done: true }
+  | { type: "error"; message: string; done: true };
+
+type SendEvent = (data: SseEvent) => void;
+
+function ts() {
+  return new Date().toLocaleTimeString("vi-VN", { hour12: false });
+}
+
+const GPT_INPUT_COST_PER_1K = 0.002;
+const GPT_OUTPUT_COST_PER_1K = 0.008;
 
 export async function runAgentForProject(
   projectId: number,
@@ -74,20 +89,17 @@ export async function runAgentForProject(
 
   const prompt = promptFn(project);
 
-  // Mark task as running
-  await db
-    .update(agentTasksTable)
-    .set({ status: "running", output: null, errorMessage: null })
-    .where(
-      eq(agentTasksTable.projectId, projectId)
-    );
+  sendEvent?.({ type: "log", message: `[${ts()}] Khởi tạo ${agentType.toUpperCase()} agent...` });
+  sendEvent?.({ type: "progress", percent: 2 });
+  sendEvent?.({ type: "status", status: "running" });
 
   // Find the specific task
-  const [task] = await db
+  const allTasks = await db
     .select()
     .from(agentTasksTable)
-    .where(eq(agentTasksTable.projectId, projectId))
-    .then((rows) => rows.filter((r) => r.agentType === agentType));
+    .where(eq(agentTasksTable.projectId, projectId));
+
+  const task = allTasks.find((r) => r.agentType === agentType);
 
   if (!task) {
     throw new Error(`Task not found for agent ${agentType}`);
@@ -99,25 +111,62 @@ export async function runAgentForProject(
     .set({ status: "running", output: null, errorMessage: null, completedAt: null })
     .where(eq(agentTasksTable.id, task.id));
 
+  // Create agent_run record
+  const [run] = await db
+    .insert(agentRunsTable)
+    .values({ taskId: task.id, status: "running" })
+    .returning();
+
+  sendEvent?.({ type: "log", message: `[${ts()}] Kết nối GPT-4.1...` });
+  sendEvent?.({ type: "progress", percent: 8 });
+
   let fullOutput = "";
+  let inputTokens = 0;
+  let outputTokens = 0;
 
   try {
+    sendEvent?.({ type: "log", message: `[${ts()}] Gửi prompt đến model (${prompt.length} ký tự)...` });
+    sendEvent?.({ type: "progress", percent: 15 });
+
     const stream = await openai.chat.completions.create({
       model: "gpt-4.1",
       messages: [{ role: "user", content: prompt }],
       stream: true,
       max_tokens: 4000,
+      stream_options: { include_usage: true },
     });
+
+    sendEvent?.({ type: "log", message: `[${ts()}] Nhận phản hồi từ model, đang stream output...` });
+    sendEvent?.({ type: "progress", percent: 20 });
+
+    let chunkCount = 0;
 
     for await (const chunk of stream) {
       const delta = chunk.choices[0]?.delta?.content ?? "";
       if (delta) {
         fullOutput += delta;
-        if (sendEvent) {
-          sendEvent({ text: delta });
+        chunkCount++;
+        sendEvent?.({ type: "text", content: delta, text: delta });
+
+        // Emit progress heuristic: 20–90% based on output length (expect ~3000 chars)
+        const estimatedPercent = Math.min(90, 20 + Math.floor((fullOutput.length / 3000) * 70));
+        if (chunkCount % 20 === 0) {
+          sendEvent?.({ type: "progress", percent: estimatedPercent });
         }
       }
+
+      // Capture usage from final chunk
+      if (chunk.usage) {
+        inputTokens = chunk.usage.prompt_tokens ?? 0;
+        outputTokens = chunk.usage.completion_tokens ?? 0;
+      }
     }
+
+    const totalTokens = inputTokens + outputTokens;
+    const cost = (inputTokens / 1000) * GPT_INPUT_COST_PER_1K + (outputTokens / 1000) * GPT_OUTPUT_COST_PER_1K;
+
+    sendEvent?.({ type: "progress", percent: 95 });
+    sendEvent?.({ type: "log", message: `[${ts()}] Lưu kết quả vào database...` });
 
     // Mark task as completed
     await db
@@ -129,14 +178,25 @@ export async function runAgentForProject(
       })
       .where(eq(agentTasksTable.id, task.id));
 
+    // Update agent_run record
+    await db
+      .update(agentRunsTable)
+      .set({
+        status: "completed",
+        finishedAt: new Date(),
+        tokens: totalTokens,
+        cost,
+      })
+      .where(eq(agentRunsTable.id, run.id));
+
     // Recalculate project completion
-    const allTasks = await db
+    const updatedTasks = await db
       .select()
       .from(agentTasksTable)
       .where(eq(agentTasksTable.projectId, projectId));
 
-    const completed = allTasks.filter((t) => t.status === "completed").length;
-    const total = allTasks.length;
+    const completed = updatedTasks.filter((t) => t.status === "completed").length;
+    const total = updatedTasks.length;
     const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
     const allDone = completed === total;
 
@@ -147,6 +207,13 @@ export async function runAgentForProject(
         status: allDone ? "completed" : "running",
       })
       .where(eq(projectsTable.id, projectId));
+
+    sendEvent?.({ type: "progress", percent: 100 });
+    sendEvent?.({
+      type: "log",
+      message: `[${ts()}] Hoàn thành ✓ — ${totalTokens.toLocaleString()} tokens — $${cost.toFixed(4)}`,
+    });
+    sendEvent?.({ type: "done", tokens: totalTokens, cost, runId: run.id, done: true });
 
   } catch (err) {
     logger.error({ err, agentType, projectId }, "Agent failed");
@@ -159,6 +226,13 @@ export async function runAgentForProject(
         completedAt: new Date(),
       })
       .where(eq(agentTasksTable.id, task.id));
+
+    await db
+      .update(agentRunsTable)
+      .set({ status: "failed", finishedAt: new Date() })
+      .where(eq(agentRunsTable.id, run.id));
+
+    sendEvent?.({ type: "error", message: String(err), done: true });
 
     throw err;
   }

@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
-import { eq } from "drizzle-orm";
-import { db, agentTasksTable, projectsTable } from "@workspace/db";
+import { eq, desc } from "drizzle-orm";
+import { db, agentTasksTable, projectsTable, agentRunsTable } from "@workspace/db";
 import { RunAgentParams, GetTaskParams } from "@workspace/api-zod";
 import { runAgentForProject } from "../lib/agents";
 
@@ -11,6 +11,14 @@ function formatTask(t: typeof agentTasksTable.$inferSelect) {
     ...t,
     createdAt: t.createdAt.toISOString(),
     completedAt: t.completedAt ? t.completedAt.toISOString() : null,
+  };
+}
+
+function formatRun(r: typeof agentRunsTable.$inferSelect) {
+  return {
+    ...r,
+    startedAt: r.startedAt.toISOString(),
+    finishedAt: r.finishedAt ? r.finishedAt.toISOString() : null,
   };
 }
 
@@ -44,6 +52,23 @@ router.get("/tasks/:id", async (req, res): Promise<void> => {
   res.json(formatTask(task));
 });
 
+// GET /tasks/:id/runs — list all runs for a task
+router.get("/tasks/:id/runs", async (req, res): Promise<void> => {
+  const params = GetTaskParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+
+  const runs = await db
+    .select()
+    .from(agentRunsTable)
+    .where(eq(agentRunsTable.taskId, params.data.id))
+    .orderBy(desc(agentRunsTable.startedAt));
+
+  res.json(runs.map(formatRun));
+});
+
 // POST /projects/:id/agents/:agentType/run  — SSE streaming
 router.post("/projects/:id/agents/:agentType/run", async (req, res): Promise<void> => {
   const params = RunAgentParams.safeParse(req.params);
@@ -73,10 +98,9 @@ router.post("/projects/:id/agents/:agentType/run", async (req, res): Promise<voi
   };
 
   try {
-    await runAgentForProject(params.data.id, params.data.agentType, project, sendEvent);
-    sendEvent({ done: true });
+    await runAgentForProject(params.data.id, params.data.agentType, project, sendEvent as any);
   } catch (err) {
-    sendEvent({ error: String(err), done: true });
+    sendEvent({ type: "error", message: String(err), done: true });
   } finally {
     res.end();
   }

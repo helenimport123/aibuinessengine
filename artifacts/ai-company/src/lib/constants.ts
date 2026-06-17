@@ -10,6 +10,7 @@ export const AGENT_CONFIG = {
     border: "border-cyan-400/30",
     glow: "shadow-[0_0_20px_rgba(34,211,238,0.25)]",
     accent: "cyan",
+    progressColor: "bg-cyan-400",
   },
   marketing: {
     name: "AI Marketing",
@@ -20,6 +21,7 @@ export const AGENT_CONFIG = {
     border: "border-fuchsia-400/30",
     glow: "shadow-[0_0_20px_rgba(232,121,249,0.25)]",
     accent: "fuchsia",
+    progressColor: "bg-fuchsia-400",
   },
   sales: {
     name: "AI Sales",
@@ -30,6 +32,7 @@ export const AGENT_CONFIG = {
     border: "border-emerald-400/30",
     glow: "shadow-[0_0_20px_rgba(52,211,153,0.25)]",
     accent: "emerald",
+    progressColor: "bg-emerald-400",
   },
 } as const;
 
