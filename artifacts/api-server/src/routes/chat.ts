@@ -3,6 +3,7 @@ import { eq, desc } from "drizzle-orm";
 import { db, conversations, messages, projectsTable, knowledgeBaseTable } from "@workspace/db";
 import { openai } from "@workspace/integrations-openai-ai-server";
 import { buildProjectContext } from "../lib/rag";
+import { saveMemory } from "../lib/memory";
 
 const router: IRouter = Router();
 
@@ -80,7 +81,7 @@ router.delete("/chat/conversations/:convId", async (req, res): Promise<void> => 
   res.sendStatus(204);
 });
 
-// POST /chat/conversations/:convId/messages  — SSE with RAG
+// POST /chat/conversations/:convId/messages  — SSE with RAG + Memory
 router.post("/chat/conversations/:convId/messages", async (req, res): Promise<void> => {
   const convId = parseId(req.params.convId);
   if (!convId) { res.status(400).json({ error: "Invalid conversation id" }); return; }
@@ -91,7 +92,7 @@ router.post("/chat/conversations/:convId/messages", async (req, res): Promise<vo
   const [conv] = await db.select().from(conversations).where(eq(conversations.id, convId));
   if (!conv) { res.status(404).json({ error: "Conversation not found" }); return; }
 
-  // Build RAG system prompt
+  // Build system prompt — read project memory + RAG context first
   let systemPrompt =
     "Bạn là AI Business Advisor — chuyên gia tư vấn kinh doanh cho doanh nhân Việt Nam. " +
     "Trả lời ngắn gọn, thực tế, dễ áp dụng. Ngôn ngữ chính: tiếng Việt.";
@@ -100,7 +101,8 @@ router.post("/chat/conversations/:convId/messages", async (req, res): Promise<vo
     const context = await buildProjectContext(conv.projectId);
     if (context) {
       systemPrompt =
-        `Bạn là AI Business Advisor cho dự án này. Bạn có đầy đủ thông tin về dự án và có thể trả lời mọi câu hỏi dựa trên dữ liệu thực tế.\n\n` +
+        `Bạn là AI Business Advisor cho dự án này. Bạn có đầy đủ thông tin về dự án, ` +
+        `bao gồm báo cáo CEO, kế hoạch marketing, sales playbook và lịch sử chat trước đó.\n\n` +
         `${context}\n\n` +
         `Hãy trả lời câu hỏi của người dùng dựa trên thông tin dự án ở trên. ` +
         `Nếu không tìm thấy thông tin cụ thể, hãy suy luận từ context hiện có. ` +
@@ -149,11 +151,18 @@ router.post("/chat/conversations/:convId/messages", async (req, res): Promise<vo
       }
     }
 
+    // Save assistant message
     await db.insert(messages).values({
       conversationId: convId,
       role: "assistant",
       content: fullResponse,
     });
+
+    // Save chat turn to project memory
+    if (conv.projectId) {
+      const chatSnapshot = `[User]: ${content}\n[Assistant]: ${fullResponse}`;
+      await saveMemory(conv.projectId, "chat_history", chatSnapshot).catch(() => {});
+    }
 
     res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
   } catch (err) {
@@ -181,6 +190,18 @@ router.get("/chat/projects/:id/knowledge", async (req, res): Promise<void> => {
       updatedAt: e.updatedAt.toISOString(),
     }))
   );
+});
+
+// GET /chat/projects/:id/memory  — read project memory
+router.get("/chat/projects/:id/memory", async (req, res): Promise<void> => {
+  const id = parseId(req.params.id);
+  if (!id) { res.status(400).json({ error: "Invalid project id" }); return; }
+
+  const { getMemory } = await import("../lib/memory");
+  const type = req.query.type as import("@workspace/db").MemoryType | undefined;
+  const entries = await getMemory(id, type);
+
+  res.json(entries.map((e) => ({ ...e, createdAt: e.createdAt.toISOString() })));
 });
 
 export default router;

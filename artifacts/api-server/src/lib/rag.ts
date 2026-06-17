@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { db, projectsTable, agentTasksTable, knowledgeBaseTable } from "@workspace/db";
+import { buildMemoryContext } from "./memory";
 
 export async function buildProjectContext(projectId: number): Promise<string> {
   const [project] = await db
@@ -54,6 +55,12 @@ export async function buildProjectContext(projectId: number): Promise<string> {
 
   if (kbSections) {
     parts.push(`\n===== KNOWLEDGE BASE =====\n${kbSections}`);
+  }
+
+  // Inject project memory (CEO report, marketing plan, sales playbook, chat history)
+  const memoryContext = await buildMemoryContext(projectId);
+  if (memoryContext) {
+    parts.push(`\n===== PROJECT MEMORY =====\n${memoryContext}`);
   }
 
   return parts.join("\n");

@@ -3,6 +3,7 @@ import { db, agentTasksTable, projectsTable, agentRunsTable } from "@workspace/d
 import { openai } from "@workspace/integrations-openai-ai-server";
 import { logger } from "./logger";
 import { syncTaskToKnowledgeBase } from "./rag";
+import { saveMemory } from "./memory";
 import { emitJobEvent } from "./queue";
 
 type Project = typeof projectsTable.$inferSelect;
@@ -349,6 +350,18 @@ export async function runAgentForProject(
     await syncTaskToKnowledgeBase(projectId, agentType, task.agentName, fullOutput).catch((e) =>
       logger.error({ e }, "Failed to sync to knowledge base")
     );
+
+    const memoryTypeMap: Record<string, import("@workspace/db").MemoryType> = {
+      ceo: "ceo_report",
+      marketing: "marketing_plan",
+      sales: "sales_playbook",
+    };
+    const memType = memoryTypeMap[agentType];
+    if (memType) {
+      await saveMemory(projectId, memType, fullOutput).catch((e) =>
+        logger.error({ e }, "Failed to save to project memory")
+      );
+    }
 
     await db
       .update(agentRunsTable)

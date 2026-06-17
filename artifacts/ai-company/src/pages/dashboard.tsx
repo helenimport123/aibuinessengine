@@ -186,11 +186,12 @@ function JobQueuePanel() {
 }
 
 export default function Dashboard() {
-  const { data: projects, isLoading } = useListProjects();
+  const { data: projectsData, isLoading } = useListProjects();
+  const projects = Array.isArray(projectsData) ? projectsData : [];
 
-  const totalProjects = projects?.length || 0;
-  const completedProjects = projects?.filter(p => p.status === "completed").length || 0;
-  const runningProjects = projects?.filter(p => p.status === "running").length || 0;
+  const totalProjects = projects.length;
+  const completedProjects = projects.filter(p => p.status === "completed").length;
+  const runningProjects = projects.filter(p => p.status === "running").length;
 
   return (
     <Layout>
