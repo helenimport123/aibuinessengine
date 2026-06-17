@@ -3,12 +3,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
-
 import Dashboard from "@/pages/dashboard";
 import NewProject from "@/pages/new-project";
 import ProjectDetail from "@/pages/project-detail";
-import AgentDetail from "@/pages/agent-detail";
-import Chat from "@/pages/chat";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -25,8 +22,6 @@ function Router() {
       <Route path="/" component={Dashboard} />
       <Route path="/new" component={NewProject} />
       <Route path="/projects/:id" component={ProjectDetail} />
-      <Route path="/projects/:id/agents/:agentType" component={AgentDetail} />
-      <Route path="/chat" component={Chat} />
       <Route component={NotFound} />
     </Switch>
   );
