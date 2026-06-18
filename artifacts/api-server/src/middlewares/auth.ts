@@ -4,8 +4,8 @@ export interface AuthUser {
   id: string;
 }
 
-export function getAuthUser(_req: Request): string {
-  return "anonymous";
+export function getAuthUser(_req: Request): string | null {
+  return null;
 }
 
 export const requireAuth: RequestHandler = (_req, _res, next) => {
