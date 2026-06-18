@@ -273,7 +273,7 @@ export default function ProjectDetail() {
   const downloadExport = async (format: "pdf" | "docx" | "markdown") => {
     if (!project) return;
     const tasks: any[] = (project as any).tasks ?? [];
-    const allCompleted = tasks.length >= 7 && tasks.every((t: any) => t.status === "completed");
+    const allCompleted = (project as any).status === "completed" && tasks.every((t: any) => t.status === "completed");
     if (!allCompleted) {
       toast({
         variant: "destructive",
@@ -413,13 +413,13 @@ export default function ProjectDetail() {
                 <FileDown className="w-4 h-4 text-primary" />
                 <span className="text-xs font-mono text-primary uppercase tracking-wider">Xuất Kế Hoạch Kinh Doanh</span>
               </div>
-              {tasks.length < 7 || tasks.some((t: any) => t.status !== "completed") ? (
+              {(project as any).status !== "completed" || tasks.some((t: any) => t.status !== "completed") ? (
                 <p className="text-[11px] text-amber-400/80 font-mono">
-                  ⚠ Cần hoàn thành tất cả 7 agent trước khi export
+                  ⚠ Cần hoàn thành tất cả agent trước khi export
                 </p>
               ) : (
                 <p className="text-[11px] text-green-400/80 font-mono">
-                  ✓ Sẵn sàng xuất — tất cả 7 agents đã hoàn thành
+                  ✓ Sẵn sàng xuất — tất cả agents đã hoàn thành
                 </p>
               )}
             </div>

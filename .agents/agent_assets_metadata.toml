@@ -1,0 +1,20 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "6w_JTzYdI-SxU06gj0oJN"
+uri = "file://exports/my_pham_thien_nhien.pdf"
+type = "pdf"
+title = "Kế hoạch kinh doanh — PDF (52KB)"
+
+[[outputs]]
+id = "l8kgKrF4A1jTG8vRpXvVd"
+uri = "file://exports/my_pham_thien_nhien.docx"
+type = "word_document"
+title = "Kế hoạch kinh doanh — DOCX (18KB)"
+
+[[outputs]]
+id = "niv-zlUDvBy98kSdLnnfz"
+uri = "file://exports/my_pham_thien_nhien.md"
+type = "text"
+title = "Kế hoạch kinh doanh — Markdown (27KB)"
