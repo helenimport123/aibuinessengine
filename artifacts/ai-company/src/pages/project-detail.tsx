@@ -29,6 +29,9 @@ import {
   Coins,
   GitBranch,
   Sparkles,
+  FileDown,
+  FileText,
+  FileType2,
 } from "lucide-react";
 import { AGENT_CONFIG, AgentType } from "@/lib/constants";
 
@@ -79,6 +82,7 @@ export default function ProjectDetail() {
   const [agentStreams, setAgentStreams] = useState<Record<string, AgentStreamState>>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [runningAll, setRunningAll] = useState(false);
+  const [exporting, setExporting] = useState<"pdf" | "docx" | "markdown" | null>(null);
 
   const bottomRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const logBottomRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -266,6 +270,43 @@ export default function ProjectDetail() {
     );
   };
 
+  const downloadExport = async (format: "pdf" | "docx" | "markdown") => {
+    if (!project) return;
+    const tasks: any[] = (project as any).tasks ?? [];
+    const allCompleted = tasks.length >= 7 && tasks.every((t: any) => t.status === "completed");
+    if (!allCompleted) {
+      toast({
+        variant: "destructive",
+        title: "Không thể xuất",
+        description: "Cần hoàn thành tất cả agent trước khi export.",
+      });
+      return;
+    }
+
+    setExporting(format);
+    try {
+      const res = await fetch(`${BASE}/api/projects/${projectId}/export/${format}`);
+      if (!res.ok) throw new Error(`Server error: ${res.status}`);
+
+      const blob = await res.blob();
+      const ext = format === "markdown" ? "md" : format;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `business-plan-${projectId}.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      toast({ title: `Xuất ${format.toUpperCase()} thành công`, description: `business-plan-${projectId}.${ext}` });
+    } catch (err) {
+      toast({ variant: "destructive", title: "Lỗi xuất file", description: String(err) });
+    } finally {
+      setExporting(null);
+    }
+  };
+
   if (isLoading) {
     return (
       <Layout>
@@ -362,6 +403,71 @@ export default function ProjectDetail() {
             <span className="text-sm font-bold text-white font-mono">{project.completionPercent}%</span>
           </div>
           <Progress value={project.completionPercent} className="h-1.5" />
+        </div>
+
+        {/* Export Section */}
+        <div className="rounded-xl border border-border/30 bg-card/20 p-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="space-y-0.5">
+              <div className="flex items-center gap-2">
+                <FileDown className="w-4 h-4 text-primary" />
+                <span className="text-xs font-mono text-primary uppercase tracking-wider">Xuất Kế Hoạch Kinh Doanh</span>
+              </div>
+              {tasks.length < 7 || tasks.some((t: any) => t.status !== "completed") ? (
+                <p className="text-[11px] text-amber-400/80 font-mono">
+                  ⚠ Cần hoàn thành tất cả 7 agent trước khi export
+                </p>
+              ) : (
+                <p className="text-[11px] text-green-400/80 font-mono">
+                  ✓ Sẵn sàng xuất — tất cả 7 agents đã hoàn thành
+                </p>
+              )}
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <Button
+                size="sm"
+                variant="outline"
+                className="border-red-400/30 text-red-400 hover:bg-red-400/10 text-xs font-mono gap-1.5"
+                onClick={() => downloadExport("pdf")}
+                disabled={!!exporting}
+              >
+                {exporting === "pdf" ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <FileDown className="w-3.5 h-3.5" />
+                )}
+                PDF
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="border-blue-400/30 text-blue-400 hover:bg-blue-400/10 text-xs font-mono gap-1.5"
+                onClick={() => downloadExport("docx")}
+                disabled={!!exporting}
+              >
+                {exporting === "docx" ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <FileType2 className="w-3.5 h-3.5" />
+                )}
+                DOCX
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="border-green-400/30 text-green-400 hover:bg-green-400/10 text-xs font-mono gap-1.5"
+                onClick={() => downloadExport("markdown")}
+                disabled={!!exporting}
+              >
+                {exporting === "markdown" ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <FileText className="w-3.5 h-3.5" />
+                )}
+                Markdown
+              </Button>
+            </div>
+          </div>
         </div>
 
         {/* Agent Cards */}

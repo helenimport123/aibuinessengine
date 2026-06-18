@@ -9,6 +9,7 @@ import jobsRouter from "./jobs";
 import advisorRouter from "./advisor";
 import costRouter from "./cost";
 import orchestrateRouter from "./orchestrate";
+import exportRouter from "./export";
 
 const router: IRouter = Router();
 
@@ -22,5 +23,6 @@ router.use(jobsRouter);
 router.use(advisorRouter);
 router.use(costRouter);
 router.use(orchestrateRouter);
+router.use(exportRouter);
 
 export default router;

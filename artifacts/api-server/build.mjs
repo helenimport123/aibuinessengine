@@ -83,6 +83,7 @@ async function buildAll() {
       "newrelic",
       "odbc",
       "pdfmake",
+      "pdfkit",
       "piscina",
       "realm",
       "ref-napi",
