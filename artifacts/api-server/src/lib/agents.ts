@@ -353,7 +353,30 @@ export async function runAgentForProject(
     sendEvent?.({ type: "log", message: `[${ts()}] Hoàn thành ✓ — ${totalTokens.toLocaleString()} tokens — $${cost.toFixed(4)}` });
     sendEvent?.({ type: "done", tokens: totalTokens, cost, runId: run.id, done: true });
   } catch (err) {
-    logger.error({ err, agentType, projectId }, "Agent failed");
+    // Full API error logging: status code, response body, stack trace
+    const apiErr = err as any;
+    logger.error(
+      {
+        agentType,
+        projectId,
+        errorMessage: apiErr?.message,
+        errorName: apiErr?.name,
+        httpStatus: apiErr?.status ?? apiErr?.statusCode,
+        responseBody: apiErr?.error ?? apiErr?.body ?? apiErr?.response?.data,
+        requestId: apiErr?.headers?.["x-request-id"],
+        stack: apiErr?.stack,
+      },
+      "Agent failed — full API error"
+    );
+    // Raw stderr dump so it's visible even without pino-pretty
+    console.error("[AGENT ERROR]", {
+      agentType,
+      projectId,
+      status: apiErr?.status ?? apiErr?.statusCode,
+      body: JSON.stringify(apiErr?.error ?? apiErr?.body ?? null),
+      message: apiErr?.message,
+      stack: apiErr?.stack,
+    });
 
     await db.update(agentTasksTable).set({ status: "failed", errorMessage: String(err), completedAt: new Date() }).where(eq(agentTasksTable.id, task.id));
     await db.update(agentRunsTable).set({ status: "failed", finishedAt: new Date() }).where(eq(agentRunsTable.id, run.id));
