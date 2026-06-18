@@ -5,6 +5,10 @@ export const MEMORY_TYPES = [
   "ceo_report",
   "marketing_plan",
   "sales_playbook",
+  "hr_plan",
+  "cskh_plan",
+  "accountant_plan",
+  "legal_plan",
   "chat_history",
 ] as const;
 

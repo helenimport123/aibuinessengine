@@ -30,8 +30,9 @@ function formatTask(t: typeof agentTasksTable.$inferSelect) {
   };
 }
 
-// Ownership filter: user owns the project OR it's legacy (null userId)
-function ownerFilter(userId: string) {
+// Ownership filter: user owns the project OR project has no owner (no-auth mode)
+function ownerFilter(userId: string | null) {
+  if (!userId) return isNull(projectsTable.userId);
   return or(eq(projectsTable.userId, userId), isNull(projectsTable.userId));
 }
 

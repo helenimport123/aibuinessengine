@@ -24,11 +24,13 @@ function formatMsg(m: typeof messages.$inferSelect) {
   return { ...m, createdAt: m.createdAt.toISOString() };
 }
 
-function projectOwnerFilter(userId: string) {
+function projectOwnerFilter(userId: string | null) {
+  if (!userId) return isNull(projectsTable.userId);
   return or(eq(projectsTable.userId, userId), isNull(projectsTable.userId));
 }
 
-function convOwnerFilter(userId: string) {
+function convOwnerFilter(userId: string | null) {
+  if (!userId) return isNull(conversations.userId);
   return or(eq(conversations.userId, userId), isNull(conversations.userId));
 }
 

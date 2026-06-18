@@ -26,11 +26,11 @@ function formatMsg(m: typeof messages.$inferSelect) {
   return { ...m, createdAt: m.createdAt.toISOString() };
 }
 
-function ownerFilter(userId: string) {
-  return and(
-    isNull(conversations.projectId),
-    or(eq(conversations.userId, userId), isNull(conversations.userId))
-  );
+function ownerFilter(userId: string | null) {
+  const userClause = userId
+    ? or(eq(conversations.userId, userId), isNull(conversations.userId))
+    : isNull(conversations.userId);
+  return and(isNull(conversations.projectId), userClause);
 }
 
 // GET /openai/conversations

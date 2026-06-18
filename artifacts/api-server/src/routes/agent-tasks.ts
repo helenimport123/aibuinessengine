@@ -27,7 +27,8 @@ function formatRun(r: typeof agentRunsTable.$inferSelect) {
   };
 }
 
-function ownerFilter(userId: string) {
+function ownerFilter(userId: string | null) {
+  if (!userId) return isNull(projectsTable.userId);
   return or(eq(projectsTable.userId, userId), isNull(projectsTable.userId));
 }
 
@@ -110,7 +111,7 @@ router.post("/projects/:id/agents/:agentType/run", requireAuth, async (req, res)
     .where(
       and(
         eq(projectsTable.id, params.data.id),
-        or(eq(projectsTable.userId, userId), isNull(projectsTable.userId))
+        ownerFilter(userId)
       )
     );
 

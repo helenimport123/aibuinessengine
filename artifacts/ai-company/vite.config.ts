@@ -66,6 +66,19 @@ export default defineConfig({
     fs: {
       strict: true,
     },
+    proxy: {
+      "/api": {
+        target: "http://localhost:8080",
+        changeOrigin: true,
+        configure: (proxy) => {
+          proxy.on("proxyReq", (_proxyReq, req) => {
+            if (req.headers.accept?.includes("text/event-stream")) {
+              _proxyReq.removeHeader("accept-encoding");
+            }
+          });
+        },
+      },
+    },
   },
   preview: {
     port,

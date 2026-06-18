@@ -16,7 +16,8 @@ function parseId(val: unknown): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-function ownerFilter(userId: string) {
+function ownerFilter(userId: string | null) {
+  if (!userId) return isNull(projectsTable.userId);
   return or(eq(projectsTable.userId, userId), isNull(projectsTable.userId));
 }
 

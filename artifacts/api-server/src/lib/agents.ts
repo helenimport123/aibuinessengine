@@ -228,7 +228,7 @@ export async function runAgentForProject(
   await db.update(agentTasksTable).set({ status: "running", output: null, errorMessage: null, completedAt: null }).where(eq(agentTasksTable.id, task.id));
   const [run] = await db.insert(agentRunsTable).values({ taskId: task.id, status: "running" }).returning();
 
-  sendEvent?.({ type: "log", message: `[${ts()}] Kết nối GPT-4.1...` });
+  sendEvent?.({ type: "log", message: `[${ts()}] Kết nối Groq Llama 3.3...` });
   sendEvent?.({ type: "progress", percent: 8 });
 
   let fullOutput = "";
@@ -327,6 +327,10 @@ export async function runAgentForProject(
       ceo: "ceo_report",
       marketing: "marketing_plan",
       sales: "sales_playbook",
+      hr: "hr_plan",
+      cskh: "cskh_plan",
+      accountant: "accountant_plan",
+      legal: "legal_plan",
     };
     const memType = memoryTypeMap[agentType];
     if (memType) {
