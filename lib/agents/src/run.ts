@@ -358,7 +358,15 @@ export async function runAgentForProject(
     await db.update(agentTasksTable).set({ status: "completed", output: fullOutput, completedAt: new Date() }).where(eq(agentTasksTable.id, task.id));
     await syncTaskToKnowledgeBase(projectId, agentType, task.agentName, fullOutput).catch((e) => logger.error({ e }, "Failed KB sync"));
 
-    const memoryTypeMap: Record<string, import("@workspace/db").MemoryType> = { ceo: "ceo_report", marketing: "marketing_plan", sales: "sales_playbook" };
+    const memoryTypeMap: Record<string, import("@workspace/db").MemoryType> = {
+      ceo: "ceo_report",
+      marketing: "marketing_plan",
+      sales: "sales_playbook",
+      hr: "hr_plan",
+      cskh: "cskh_plan",
+      accountant: "accountant_plan",
+      legal: "legal_plan",
+    };
     const memType = memoryTypeMap[agentType];
     if (memType) await saveMemory(projectId, memType, fullOutput).catch((e) => logger.error({ e }, "Failed memory save"));
 
