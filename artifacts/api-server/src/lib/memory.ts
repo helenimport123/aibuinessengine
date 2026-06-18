@@ -95,6 +95,10 @@ export async function buildMemoryContext(
     ceo_report: "BÁO CÁO CEO (AI CEO)",
     marketing_plan: "KẾ HOẠCH MARKETING (AI Marketing)",
     sales_playbook: "SALES PLAYBOOK (AI Sales)",
+    hr_plan: "KẾ HOẠCH NHÂN SỰ (AI HR)",
+    cskh_plan: "KẾ HOẠCH CSKH (AI CSKH)",
+    accountant_plan: "KẾ HOẠCH TÀI CHÍNH (AI Kế Toán)",
+    legal_plan: "KHUNG PHÁP LÝ (AI Pháp Lý)",
     chat_history: "LỊCH SỬ CHAT",
   };
 
