@@ -28,6 +28,10 @@ args = "Frontend"
 task = "workflow.run"
 args = "Worker"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Redis"
+
 [[workflows.workflow]]
 name = "API Server"
 author = "agent"
@@ -37,7 +41,7 @@ outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "PORT=8080 BASE_PATH=/api pnpm --filter @workspace/api-server run dev"
+args = "redis-server --daemonize yes --port 6379 && PORT=8080 BASE_PATH=/api pnpm --filter @workspace/api-server run dev"
 waitForPort = 8080
 
 [[workflows.workflow]]
@@ -63,6 +67,18 @@ args = "pnpm --filter @workspace/worker run dev"
 [workflows.workflow.metadata]
 outputType = "console"
 
+[[workflows.workflow]]
+name = "Redis"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "redis-server --daemonize no --port 6379"
+waitForPort = 6379
+
+[workflows.workflow.metadata]
+outputType = "console"
+
 [agent]
 stack = "BEST_EFFORT_FALLBACK"
 expertMode = true
@@ -77,12 +93,12 @@ localPort = 5000
 externalPort = 5000
 
 [[ports]]
-localPort = 8080
-externalPort = 8080
+localPort = 6379
+externalPort = 3001
 
 [[ports]]
-localPort = 8081
-externalPort = 80
+localPort = 8080
+externalPort = 8080
 
 [[ports]]
 localPort = 19776
@@ -96,3 +112,4 @@ channel = "stable-25_05"
 [userenv.shared]
 PORT = "5000"
 AI_INTEGRATIONS_OPENAI_BASE_URL = "https://api.groq.com/openai/v1"
+REDIS_URL = "redis://localhost:6379"
