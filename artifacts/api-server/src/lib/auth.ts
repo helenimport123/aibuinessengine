@@ -1,35 +1,26 @@
-import * as client from "openid-client";
-import { Strategy, type VerifyFunction } from "openid-client/passport";
 import passport from "passport";
+import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import session from "express-session";
 import type { Express } from "express";
 import connectPgSimple from "connect-pg-simple";
 import { sql } from "drizzle-orm";
 import { db, usersTable } from "@workspace/db";
 
-let _oidcConfig: Awaited<ReturnType<typeof client.discovery>> | null = null;
-let _oidcConfigTime = 0;
-
-async function getOidcConfig() {
-  if (_oidcConfig && Date.now() - _oidcConfigTime < 3_600_000) return _oidcConfig;
-  _oidcConfig = await client.discovery(
-    new URL(process.env.ISSUER_URL ?? "https://replit.com/oidc"),
-    process.env.REPL_ID!
-  );
-  _oidcConfigTime = Date.now();
-  return _oidcConfig;
-}
-
-async function upsertUser(claims: client.IDToken) {
+async function upsertUser(profile: {
+  id: string;
+  email?: string;
+  firstName?: string;
+  lastName?: string;
+  profileImageUrl?: string;
+}) {
   await db
     .insert(usersTable)
     .values({
-      id: claims.sub,
-      email: typeof claims.email === "string" ? claims.email : null,
-      firstName: typeof claims.first_name === "string" ? claims.first_name : null,
-      lastName: typeof claims.last_name === "string" ? claims.last_name : null,
-      profileImageUrl:
-        typeof claims.profile_image_url === "string" ? claims.profile_image_url : null,
+      id: profile.id,
+      email: profile.email ?? null,
+      firstName: profile.firstName ?? null,
+      lastName: profile.lastName ?? null,
+      profileImageUrl: profile.profileImageUrl ?? null,
     })
     .onConflictDoUpdate({
       target: usersTable.id,
@@ -49,9 +40,6 @@ export async function setupAuth(app: Express): Promise<void> {
   const rawSecret = process.env.SESSION_SECRET;
   if (!rawSecret && process.env.NODE_ENV === "production") {
     throw new Error("SESSION_SECRET environment variable is required in production");
-  }
-  if (!rawSecret) {
-    console.warn("[auth] SESSION_SECRET not set — sessions will reset on restart");
   }
   const sessionSecret = rawSecret ?? "dev-insecure-secret-please-set-SESSION_SECRET";
 
@@ -81,79 +69,73 @@ export async function setupAuth(app: Express): Promise<void> {
   app.use(passport.initialize());
   app.use(passport.session());
 
-  const config = await getOidcConfig();
-  const replitDomain = process.env.REPLIT_DOMAINS?.split(",")[0];
+  const clientID = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
 
-  const verify: VerifyFunction = async (tokens, verified) => {
-    try {
-      const claims = tokens.claims();
-      await upsertUser(claims);
-      verified(null, {
-        claims,
-        access_token: tokens.access_token,
-        refresh_token: tokens.refresh_token,
-        expires_at: claims.exp,
-      });
-    } catch (err) {
-      verified(err as Error);
-    }
-  };
+  if (!clientID || !clientSecret) {
+    console.warn("[auth] GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET not set — Google login disabled");
+  } else {
+    const callbackURL =
+      process.env.REPLIT_DOMAINS
+        ? `https://${process.env.REPLIT_DOMAINS.split(",")[0]}/api/callback`
+        : "http://localhost:8080/api/callback";
 
-  const registeredStrategies = new Set<string>();
+    passport.use(
+      new GoogleStrategy(
+        {
+          clientID,
+          clientSecret,
+          callbackURL,
+          scope: ["openid", "email", "profile"],
+        },
+        async (_accessToken, _refreshToken, profile, done) => {
+          try {
+            const email = profile.emails?.[0]?.value;
+            const photo = profile.photos?.[0]?.value;
+            const firstName = profile.name?.givenName;
+            const lastName = profile.name?.familyName;
 
-  function ensureStrategy(hostname: string): string {
-    const domain = replitDomain ?? hostname;
-    const name = `replitauth:${domain}`;
-    if (!registeredStrategies.has(name)) {
-      passport.use(
-        new Strategy(
-          {
-            name,
-            config,
-            scope: "openid email profile offline_access",
-            callbackURL: `https://${domain}/api/callback`,
-          },
-          verify
-        )
-      );
-      registeredStrategies.add(name);
-    }
-    return name;
+            await upsertUser({
+              id: `google:${profile.id}`,
+              email,
+              firstName,
+              lastName,
+              profileImageUrl: photo,
+            });
+
+            done(null, {
+              id: `google:${profile.id}`,
+              email,
+              firstName,
+              lastName,
+              profileImageUrl: photo,
+            });
+          } catch (err) {
+            done(err as Error);
+          }
+        }
+      )
+    );
   }
 
   passport.serializeUser((user, cb) => cb(null, user));
   passport.deserializeUser((user, cb) => cb(null, user as Express.User));
 
-  app.get("/api/login", (req, res, next) => {
-    const strategyName = ensureStrategy(req.hostname);
-    passport.authenticate(strategyName, {
-      prompt: "login consent",
-      scope: ["openid", "email", "profile", "offline_access"],
-    })(req, res, next);
-  });
+  app.get("/api/login", passport.authenticate("google", {
+    scope: ["openid", "email", "profile"],
+    prompt: "select_account",
+  }));
 
-  app.get("/api/callback", (req, res, next) => {
-    const strategyName = ensureStrategy(req.hostname);
-    passport.authenticate(strategyName, {
+  app.get("/api/callback",
+    passport.authenticate("google", {
       successReturnToOrRedirect: "/",
       failureRedirect: "/api/login",
-    })(req, res, next);
-  });
+    })
+  );
 
   app.get("/api/logout", (req, res) => {
-    req.logout(async () => {
-      try {
-        const cfg = await getOidcConfig();
-        const domain = replitDomain ?? req.hostname;
-        res.redirect(
-          client.buildEndSessionUrl(cfg, {
-            client_id: process.env.REPL_ID!,
-            post_logout_redirect_uri: `${req.protocol}://${domain}`,
-          }).href
-        );
-      } catch {
-        res.redirect("/");
-      }
+    req.logout(() => {
+      res.redirect("/");
     });
   });
 }
