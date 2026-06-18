@@ -225,7 +225,7 @@ router.post("/openai/conversations/:id/messages", requireAuth, async (req, res):
 
   try {
     const stream = await openai.chat.completions.create({
-      model: "gpt-4.1",
+      model: "llama-3.3-70b-versatile",
       max_completion_tokens: 8192,
       messages: [
         {

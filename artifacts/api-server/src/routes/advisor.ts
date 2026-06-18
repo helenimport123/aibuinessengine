@@ -125,7 +125,7 @@ Nguyên tắc trả lời:
 
   try {
     const stream = await openai.chat.completions.create({
-      model: "gpt-4.1",
+      model: "llama-3.3-70b-versatile",
       max_completion_tokens: 2048,
       messages: [
         { role: "system", content: systemPrompt },

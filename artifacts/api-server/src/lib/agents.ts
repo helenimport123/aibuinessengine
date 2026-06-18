@@ -175,7 +175,7 @@ const GPT_OUTPUT_COST_PER_1K = 0.008;
 
 async function fetchCeoExecutionPlan(project: Project, ceoAnalysis: string): Promise<ExecutionPlanItem[]> {
   const resp = await openai.chat.completions.create({
-    model: "gpt-4.1",
+    model: "llama-3.3-70b-versatile",
     max_tokens: 600,
     messages: [
       { role: "user", content: `Ý tưởng kinh doanh: ${project.businessIdea}\nNgành: ${project.industry ?? "chưa xác định"}\nThị trường: ${project.targetMarket ?? "chưa xác định"}` },
@@ -254,7 +254,7 @@ export async function runAgentForProject(
     sendEvent?.({ type: "progress", percent: 15 });
 
     const stream = await openai.chat.completions.create({
-      model: "gpt-4.1",
+      model: "llama-3.3-70b-versatile",
       messages: [{ role: "user", content: prompt }],
       stream: true,
       max_tokens: 4000,
