@@ -9,8 +9,6 @@ import ProjectDetail from "@/pages/project-detail";
 import ChatPage from "@/pages/chat";
 import CompanyChatPage from "@/pages/company-chat";
 import CostDashboard from "@/pages/cost";
-import LoginPage from "@/pages/login";
-import { useAuth } from "@/hooks/use-auth";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -22,20 +20,6 @@ const queryClient = new QueryClient({
 });
 
 function Router() {
-  const { user, isLoading } = useAuth();
-
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-black flex items-center justify-center">
-        <div className="text-gray-400 text-sm animate-pulse">Đang tải...</div>
-      </div>
-    );
-  }
-
-  if (!user) {
-    return <LoginPage />;
-  }
-
   return (
     <Switch>
       <Route path="/" component={Dashboard} />

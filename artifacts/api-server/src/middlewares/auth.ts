@@ -2,20 +2,12 @@ import type { RequestHandler, Request } from "express";
 
 export interface AuthUser {
   id: string;
-  email?: string;
-  firstName?: string;
-  lastName?: string;
-  profileImageUrl?: string;
 }
 
-export function getAuthUser(req: Request): string {
-  return (req.user as AuthUser).id;
+export function getAuthUser(_req: Request): string {
+  return "anonymous";
 }
 
-export const requireAuth: RequestHandler = (req, res, next) => {
-  if (!req.isAuthenticated()) {
-    res.status(401).json({ error: "Authentication required" });
-    return;
-  }
+export const requireAuth: RequestHandler = (_req, _res, next) => {
   next();
 };
