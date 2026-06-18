@@ -8,6 +8,7 @@ import chatRouter from "./chat";
 import jobsRouter from "./jobs";
 import advisorRouter from "./advisor";
 import costRouter from "./cost";
+import orchestrateRouter from "./orchestrate";
 
 const router: IRouter = Router();
 
@@ -20,5 +21,6 @@ router.use(chatRouter);
 router.use(jobsRouter);
 router.use(advisorRouter);
 router.use(costRouter);
+router.use(orchestrateRouter);
 
 export default router;

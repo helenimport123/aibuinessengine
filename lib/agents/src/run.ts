@@ -161,6 +161,55 @@ Xây dựng khung pháp lý toàn diện:
 Viết chi tiết bằng tiếng Việt, dẫn chiếu luật cụ thể.`,
 };
 
+async function generateExecutiveSummary(
+  projectId: number,
+  tasks: Array<typeof agentTasksTable.$inferSelect>,
+  project: Project
+): Promise<void> {
+  const reports = tasks
+    .filter((t) => t.status === "completed" && t.output)
+    .map((t) => `## ${t.agentName}\n\n${t.output}`)
+    .join("\n\n---\n\n");
+
+  if (!reports) return;
+
+  const resp = await openai.chat.completions.create({
+    model: "gpt-4.1",
+    max_tokens: 2000,
+    messages: [
+      {
+        role: "user",
+        content: `Bạn là AI CEO tổng hợp báo cáo kinh doanh.
+
+Ý tưởng kinh doanh: ${project.businessIdea}
+Ngành: ${project.industry ?? "chưa xác định"}
+
+Dưới đây là báo cáo từ ${tasks.length} AI agents:
+
+${reports}
+
+---
+
+Hãy tổng hợp thành **Executive Summary** ngắn gọn, súc tích (600-800 từ) bao gồm:
+
+1. **Tóm tắt cơ hội thị trường** — tại sao ý tưởng này khả thi
+2. **Chiến lược triển khai ưu tiên** — 5 hành động cụ thể nhất từ tất cả các báo cáo
+3. **Ngân sách & Dòng tiền** — con số chủ chốt từ báo cáo tài chính
+4. **Rủi ro chính** — top 3 rủi ro cần chú ý
+5. **Lời khuyên kết luận** — quyết định quan trọng nhất cần thực hiện ngay
+
+Viết bằng tiếng Việt, markdown format, chuyên nghiệp và hành động được.`,
+      },
+    ],
+  });
+
+  const summary = resp.choices[0]?.message?.content ?? "";
+  if (summary) {
+    await db.update(projectsTable).set({ executiveSummary: summary }).where(eq(projectsTable.id, projectId));
+    logger.info({ projectId }, "Executive summary generated and saved");
+  }
+}
+
 async function fetchCeoExecutionPlan(project: Project, ceoAnalysis: string): Promise<ExecutionPlanItem[]> {
   const resp = await openai.chat.completions.create({
     model: "gpt-4.1",
@@ -267,14 +316,34 @@ export async function runAgentForProject(
       sendEvent?.({ type: "progress", percent: 80 });
       sendEvent?.({ type: "log", message: `[${ts()}] CEO đang lập kế hoạch thực thi...` });
       try {
-        const executionPlan = await fetchCeoExecutionPlan(project, fullOutput);
-        if (executionPlan.length > 0) {
-          await db.update(projectsTable).set({ executionPlan: JSON.stringify(executionPlan) }).where(eq(projectsTable.id, projectId));
-          const createdTasks = await createOrchestratedTasks(projectId, executionPlan);
-          sendEvent?.({ type: "log", message: `[${ts()}] Kế hoạch: ${executionPlan.map((a) => a.agent.toUpperCase()).join(", ")} — đã đưa vào queue.` });
-          sendEvent?.({ type: "plan", plan: executionPlan });
+        // ORCHESTRATOR MODE: if executionPlan already pre-set (by /api/orchestrate), 
+        // use existing tasks instead of creating new ones to avoid duplicates
+        const existingPlan = project.executionPlan ? (JSON.parse(project.executionPlan) as ExecutionPlanItem[]) : null;
+        const existingSubTasks = allTasks.filter((t) => t.agentType !== "ceo" && t.status === "pending");
+
+        if (existingPlan && existingSubTasks.length > 0) {
+          // Orchestrator mode — tasks already pre-created, just enqueue them
+          sendEvent?.({ type: "log", message: `[${ts()}] Orchestrator mode: ${existingSubTasks.map((t) => t.agentType.toUpperCase()).join(", ")} — đưa vào queue.` });
+          sendEvent?.({ type: "plan", plan: existingPlan });
+          // Mark all subordinate tasks as queued
+          const now2 = new Date();
+          for (const t of existingSubTasks) {
+            await db.update(agentTasksTable).set({ queuedAt: now2 }).where(eq(agentTasksTable.id, t.id));
+          }
           if (onTasksCreated) {
-            onTasksCreated(createdTasks.map((t) => ({ id: t.id, agentType: t.agentType, agentName: t.agentName, projectId, projectName: project.name })));
+            onTasksCreated(existingSubTasks.map((t) => ({ id: t.id, agentType: t.agentType, agentName: t.agentName, projectId, projectName: project.name })));
+          }
+        } else {
+          // Standard mode — CEO decides which agents to run
+          const executionPlan = await fetchCeoExecutionPlan(project, fullOutput);
+          if (executionPlan.length > 0) {
+            await db.update(projectsTable).set({ executionPlan: JSON.stringify(executionPlan) }).where(eq(projectsTable.id, projectId));
+            const createdTasks = await createOrchestratedTasks(projectId, executionPlan);
+            sendEvent?.({ type: "log", message: `[${ts()}] Kế hoạch: ${executionPlan.map((a) => a.agent.toUpperCase()).join(", ")} — đã đưa vào queue.` });
+            sendEvent?.({ type: "plan", plan: executionPlan });
+            if (onTasksCreated) {
+              onTasksCreated(createdTasks.map((t) => ({ id: t.id, agentType: t.agentType, agentName: t.agentName, projectId, projectName: project.name })));
+            }
           }
         }
       } catch (planErr) {
@@ -302,6 +371,13 @@ export async function runAgentForProject(
     const allDone = completed === total;
 
     await db.update(projectsTable).set({ completionPercent: percent, status: allDone ? "completed" : "running" }).where(eq(projectsTable.id, projectId));
+
+    // Auto-generate executive summary when all agents are done
+    if (allDone && total > 1) {
+      generateExecutiveSummary(projectId, updatedTasks, project).catch((e) =>
+        logger.error({ e, projectId }, "Failed to generate executive summary")
+      );
+    }
 
     sendEvent?.({ type: "progress", percent: 100 });
     sendEvent?.({ type: "log", message: `[${ts()}] Hoàn thành ✓ — ${totalTokens.toLocaleString()} tokens — $${cost.toFixed(4)}` });

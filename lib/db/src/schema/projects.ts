@@ -15,6 +15,7 @@ export const projectsTable = pgTable(
     status: text("status").notNull().default("draft"),
     completionPercent: integer("completion_percent").notNull().default(0),
     executionPlan: text("execution_plan"),
+    executiveSummary: text("executive_summary"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
   },
   (table) => [index("idx_projects_user_id").on(table.userId)]
