@@ -4,3 +4,4 @@
 - [Phase 3 Worker + Redis](worker-redis.md) — BullMQ Worker separate process, ECONNRESET from Upstash is normal idle-timeout (IORedis auto-reconnects), REDIS_URL may need regex extraction, Upstash needs rediss:// TLS.
 - [Vite Proxy + No-Auth Mode](vite-proxy-nullauth.md) — Vite must proxy /api → port 8080; ownerFilter must handle null userId (no-auth mode) with explicit isNull() branch; baseUrl:/api set in orval.config.ts.
 - [Phase 2 Agents](phase2-agents.md) — all 7 agents (ceo/marketing/sales/cskh/hr/accountant/legal) fully wired; memoryTypeMap covers all 7; MEMORY_TYPES in project_memory.ts includes hr_plan/cskh_plan/accountant_plan/legal_plan.
+- [Executive Dashboard](executive-dashboard.md) — route /projects/:id/executive; backend POST generate uses llama json_object mode; caches in project_memory as executive_data; SVG gauge uses strokeDasharray/Dashoffset on semicircle path.

@@ -10,6 +10,7 @@ export const MEMORY_TYPES = [
   "accountant_plan",
   "legal_plan",
   "chat_history",
+  "executive_data",
 ] as const;
 
 export type MemoryType = (typeof MEMORY_TYPES)[number];

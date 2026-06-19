@@ -32,6 +32,7 @@ import {
   FileDown,
   FileText,
   FileType2,
+  BarChart,
 } from "lucide-react";
 import { AGENT_CONFIG, AgentType } from "@/lib/constants";
 
@@ -380,6 +381,16 @@ export default function ProjectDetail() {
               <Trash2 className="w-3.5 h-3.5 mr-1.5" />
               Xoá
             </Button>
+            <Link href={`/projects/${projectId}/executive`}>
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-violet-400/30 text-violet-400 hover:bg-violet-400/10 text-xs"
+              >
+                <BarChart className="w-3.5 h-3.5 mr-1.5" />
+                Executive
+              </Button>
+            </Link>
             <Button
               size="sm"
               className="bg-primary hover:bg-primary/80 text-primary-foreground font-semibold shadow-[0_0_12px_rgba(34,211,238,0.35)] text-xs"

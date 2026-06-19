@@ -10,6 +10,7 @@ import ChatPage from "@/pages/chat";
 import CompanyChatPage from "@/pages/company-chat";
 import CostDashboard from "@/pages/cost";
 import OrchestratorPage from "@/pages/orchestrator";
+import ExecutiveDashboard from "@/pages/executive-dashboard";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -25,6 +26,7 @@ function Router() {
     <Switch>
       <Route path="/" component={Dashboard} />
       <Route path="/new" component={NewProject} />
+      <Route path="/projects/:id/executive" component={ExecutiveDashboard} />
       <Route path="/projects/:id" component={ProjectDetail} />
       <Route path="/chat" component={ChatPage} />
       <Route path="/company-chat" component={CompanyChatPage} />
