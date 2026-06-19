@@ -29,6 +29,10 @@ type MemoryStatus = {
     ceo_report: boolean;
     marketing_plan: boolean;
     sales_playbook: boolean;
+    hr_plan: boolean;
+    cskh_plan: boolean;
+    accountant_plan: boolean;
+    legal_plan: boolean;
     chat_history: number;
   };
 };
@@ -58,12 +62,30 @@ const SUGGESTED_QUESTIONS = [
   { label: "Đối thủ cạnh tranh chính là ai?", icon: "⚔️" },
   { label: "KPI nào cần theo dõi?", icon: "📊" },
   { label: "Chiến lược định vị thương hiệu?", icon: "🏆" },
+  { label: "Kế hoạch tuyển dụng như thế nào?", icon: "🧑‍💼" },
+  { label: "Quy trình CSKH ra sao?", icon: "🎧" },
+  { label: "Chi phí khởi nghiệp dự kiến bao nhiêu?", icon: "📈" },
+  { label: "Cần giấy phép gì để thành lập?", icon: "⚖️" },
 ];
 
 const MEMORY_LABELS: Record<string, string> = {
   ceo_report: "Báo cáo CEO",
   marketing_plan: "Marketing Plan",
   sales_playbook: "Sales Playbook",
+  hr_plan: "HR Plan",
+  cskh_plan: "CSKH Plan",
+  accountant_plan: "Tài Chính",
+  legal_plan: "Pháp Lý",
+};
+
+const MEMORY_ICONS: Record<string, string> = {
+  ceo_report: "🎯",
+  marketing_plan: "📣",
+  sales_playbook: "💼",
+  hr_plan: "🧑‍💼",
+  cskh_plan: "🎧",
+  accountant_plan: "📈",
+  legal_plan: "⚖️",
 };
 
 export default function CompanyChatPage() {
@@ -204,7 +226,11 @@ export default function CompanyChatPage() {
   const hasAnyMemory = memoryStatus && (
     memoryStatus.loaded.ceo_report ||
     memoryStatus.loaded.marketing_plan ||
-    memoryStatus.loaded.sales_playbook
+    memoryStatus.loaded.sales_playbook ||
+    memoryStatus.loaded.hr_plan ||
+    memoryStatus.loaded.cskh_plan ||
+    memoryStatus.loaded.accountant_plan ||
+    memoryStatus.loaded.legal_plan
   );
 
   return (
@@ -475,26 +501,26 @@ function WelcomeState({
 
       {/* Memory loaded summary */}
       {memoryStatus && (
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-4 md:grid-cols-7 gap-2">
           {Object.entries(MEMORY_LABELS).map(([key, label]) => {
             const loaded = memoryStatus.loaded[key as keyof typeof memoryStatus.loaded] as boolean;
             return (
               <div
                 key={key}
                 className={cn(
-                  "p-3 rounded-xl border text-center transition-all",
+                  "p-2.5 rounded-xl border text-center transition-all",
                   loaded
                     ? "border-green-500/30 bg-green-500/5"
-                    : "border-border/20 bg-muted/5 opacity-50"
+                    : "border-border/20 bg-muted/5 opacity-40"
                 )}
               >
-                <div className={cn("text-lg mb-1", loaded ? "text-green-400" : "text-muted-foreground")}>
-                  {key === "ceo_report" ? "🎯" : key === "marketing_plan" ? "📣" : "💼"}
+                <div className={cn("text-base mb-1", loaded ? "text-green-400" : "text-muted-foreground")}>
+                  {MEMORY_ICONS[key] ?? "📄"}
                 </div>
-                <div className={cn("text-[10px] font-mono", loaded ? "text-green-400" : "text-muted-foreground")}>
+                <div className={cn("text-[9px] font-mono leading-tight", loaded ? "text-green-400" : "text-muted-foreground")}>
                   {loaded ? "✓ Đã tải" : "Chưa có"}
                 </div>
-                <div className="text-[10px] text-muted-foreground/70 mt-0.5">{label}</div>
+                <div className="text-[9px] text-muted-foreground/70 mt-0.5 leading-tight">{label}</div>
               </div>
             );
           })}

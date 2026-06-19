@@ -37,6 +37,10 @@ router.get("/advisor/:projectId/status", requireAuth, async (req, res): Promise<
     ceo_report: entries.some((e) => e.type === "ceo_report"),
     marketing_plan: entries.some((e) => e.type === "marketing_plan"),
     sales_playbook: entries.some((e) => e.type === "sales_playbook"),
+    hr_plan: entries.some((e) => e.type === "hr_plan"),
+    cskh_plan: entries.some((e) => e.type === "cskh_plan"),
+    accountant_plan: entries.some((e) => e.type === "accountant_plan"),
+    legal_plan: entries.some((e) => e.type === "legal_plan"),
     chat_history: entries.filter((e) => e.type === "chat_history").length,
   };
 
@@ -100,10 +104,14 @@ router.post("/advisor/:projectId/ask", requireAuth, async (req, res): Promise<vo
 
   const systemPrompt = `Bạn là Advisor Agent — cố vấn kinh doanh tổng hợp cho dự án "${project.name}".
 
-Bạn có quyền truy cập toàn bộ dữ liệu của dự án, bao gồm:
-- Báo cáo CEO (phân tích thị trường, SWOT, đối thủ cạnh tranh)
-- Kế hoạch Marketing (brand identity, customer persona, chiến lược kênh)
-- Sales Playbook (quy trình bán hàng, kịch bản, xử lý từ chối)
+Bạn có quyền truy cập toàn bộ dữ liệu của dự án từ 7 AI agents, bao gồm:
+- Báo cáo CEO (phân tích thị trường, SWOT, chiến lược định vị, KPI 12 tháng)
+- Kế hoạch Marketing (brand identity, customer persona, chiến lược kênh, Facebook/TikTok/Zalo Ads, ngân sách)
+- Sales Playbook (ICP, nguồn lead, sales funnel, script telesale, closing techniques)
+- Kế hoạch CSKH (customer journey map, quy trình hỗ trợ, loyalty program, NPS/CSAT)
+- Kế hoạch HR (cơ cấu tổ chức, JD mẫu, lương thưởng, onboarding 30-60-90 ngày)
+- Kế hoạch Tài Chính (mô hình doanh thu, CAPEX/OPEX, P&L 3 năm, cash flow, VAT/TNDN)
+- Khung Pháp Lý (loại hình doanh nghiệp, giấy phép con, hợp đồng mẫu, SHTT, Nghị định 13/2023)
 - Lịch sử chat với người dùng
 
 ${memoryContext ? `Dữ liệu dự án:\n\n${memoryContext}` : `Lưu ý: Dự án "${project.name}" chưa có dữ liệu từ các AI agent. Hãy đề xuất người dùng chạy phân tích (Auto Orchestrate) trước.`}

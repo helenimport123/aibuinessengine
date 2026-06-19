@@ -265,7 +265,7 @@ export async function runAgentForProject(
 
   const [run] = await db.insert(agentRunsTable).values({ taskId: task.id, status: "running" }).returning();
 
-  sendEvent?.({ type: "log", message: `[${ts()}] Kết nối GPT-4.1...` });
+  sendEvent?.({ type: "log", message: `[${ts()}] Kết nối Groq Llama 3.3 70B...` });
   sendEvent?.({ type: "progress", percent: 8 });
 
   let fullOutput = "";
